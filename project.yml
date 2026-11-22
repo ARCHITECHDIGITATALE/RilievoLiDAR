@@ -2,7 +2,7 @@ name: RilievoLiDAR
 options:
   bundleIdPrefix: com.rilievo
   deploymentTarget:
-    iOS: "16.0"
+    iOS: "17.0"
 targets:
   RilievoLiDAR:
     type: application
@@ -15,6 +15,7 @@ targets:
       properties:
         CFBundleDisplayName: Rilievo LiDAR
         NSCameraUsageDescription: La fotocamera e il LiDAR servono per eseguire il rilievo della stanza.
+        NSPhotoLibraryAddUsageDescription: Serve per salvare le foto del rilievo nella libreria.
         UILaunchScreen: {}
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
@@ -31,8 +32,8 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         SWIFT_VERSION: "5.0"
         SWIFT_STRICT_CONCURRENCY: minimal
-        MARKETING_VERSION: "1.0"
-        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "2.0"
+        CURRENT_PROJECT_VERSION: "2"
         CODE_SIGNING_ALLOWED: "NO"
         CODE_SIGNING_REQUIRED: "NO"
         CODE_SIGN_IDENTITY: ""

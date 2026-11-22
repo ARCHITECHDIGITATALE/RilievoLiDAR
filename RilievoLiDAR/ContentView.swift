@@ -1,83 +1,126 @@
 import SwiftUI
-import RoomPlan
 
+/// Schermata iniziale: archivio dei rilievi.
 struct ContentView: View {
-    var body: some View {
-        if RoomCaptureSession.isSupported {
-            ScannerScreen()
-        } else {
-            VStack(spacing: 12) {
-                Image(systemName: "exclamationmark.triangle")
-                    .font(.largeTitle)
-                Text("Dispositivo non supportato")
-                    .font(.headline)
-                Text("RoomPlan richiede un iPad o iPhone con sensore LiDAR e iOS/iPadOS 16 o successivo.")
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(32)
-        }
-    }
-}
+    @EnvironmentObject var store: ProjectStore
 
-struct ScannerScreen: View {
-    @StateObject private var scanner = RoomScanner()
+    @State private var showNew = false
+    @State private var newName = ""
+    @State private var renameTarget: Project?
+    @State private var renameText = ""
+    @State private var deleteTarget: Project?
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            RoomCaptureViewRepresentable(scanner: scanner)
-                .ignoresSafeArea()
-
-            VStack(spacing: 12) {
-                if let message = scanner.errorMessage {
-                    Text(message)
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                        .multilineTextAlignment(.center)
-                }
-
-                HStack(spacing: 16) {
-                    if scanner.isScanning {
-                        Button(role: .destructive) {
-                            scanner.stop()
-                        } label: {
-                            Label("Termina scansione", systemImage: "stop.circle.fill")
-                        }
-                        .buttonStyle(.borderedProminent)
-                    } else if scanner.isProcessing {
-                        ProgressView("Elaborazione del rilievo…")
-                    } else {
-                        Button {
-                            scanner.start()
-                        } label: {
-                            Label(scanner.exportURL == nil ? "Avvia scansione" : "Nuova scansione",
-                                  systemImage: "viewfinder")
-                        }
-                        .buttonStyle(.borderedProminent)
-
-                        if let url = scanner.exportURL {
-                            ShareLink(item: url) {
-                                Label("Condividi USDZ", systemImage: "square.and.arrow.up")
+        NavigationStack {
+            Group {
+                if store.projects.isEmpty {
+                    ContentUnavailableView("Nessun rilievo",
+                                           systemImage: "cube.transparent",
+                                           description: Text("Tocca + in alto per creare un nuovo rilievo."))
+                } else {
+                    List {
+                        ForEach(store.projects) { project in
+                            NavigationLink {
+                                ProjectDetailView(projectID: project.id)
+                            } label: {
+                                ProjectRow(project: project, folder: store.folder(for: project.id))
                             }
-                            .buttonStyle(.bordered)
+                            .swipeActions {
+                                Button(role: .destructive) {
+                                    deleteTarget = project
+                                } label: {
+                                    Label("Elimina", systemImage: "trash")
+                                }
+                            }
+                            .contextMenu {
+                                Button {
+                                    renameText = project.name
+                                    renameTarget = project
+                                } label: {
+                                    Label("Rinomina", systemImage: "pencil")
+                                }
+                                Button(role: .destructive) {
+                                    deleteTarget = project
+                                } label: {
+                                    Label("Elimina", systemImage: "trash")
+                                }
+                            }
                         }
                     }
                 }
-                .controlSize(.large)
             }
-            .padding()
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
-            .padding()
+            .navigationTitle("Rilievi")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        newName = "Rilievo \(store.projects.count + 1)"
+                        showNew = true
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                }
+            }
+            .alert("Nuovo rilievo", isPresented: $showNew) {
+                TextField("Nome del rilievo", text: $newName)
+                Button("Crea") { store.create(name: newName) }
+                Button("Annulla", role: .cancel) {}
+            }
+            .alert("Rinomina rilievo", isPresented: Binding(get: { renameTarget != nil },
+                                                           set: { if !$0 { renameTarget = nil } })) {
+                TextField("Nome", text: $renameText)
+                Button("Salva") {
+                    if let t = renameTarget { store.rename(t.id, to: renameText) }
+                    renameTarget = nil
+                }
+                Button("Annulla", role: .cancel) { renameTarget = nil }
+            }
+            .confirmationDialog("Eliminare il rilievo?",
+                                isPresented: Binding(get: { deleteTarget != nil },
+                                                     set: { if !$0 { deleteTarget = nil } }),
+                                titleVisibility: .visible) {
+                Button("Elimina", role: .destructive) {
+                    if let t = deleteTarget { store.delete(t.id) }
+                    deleteTarget = nil
+                }
+            } message: {
+                Text("Verranno eliminati scansioni, mesh e foto. L'operazione non si può annullare.")
+            }
         }
     }
 }
 
-struct RoomCaptureViewRepresentable: UIViewRepresentable {
-    let scanner: RoomScanner
+struct ProjectRow: View {
+    let project: Project
+    let folder: URL
 
-    func makeUIView(context: Context) -> RoomCaptureView {
-        scanner.captureView
+    var body: some View {
+        HStack(spacing: 12) {
+            Group {
+                if let thumb = project.photos.first,
+                   let image = UIImage(contentsOfFile: folder.appendingPathComponent(thumb.thumbFile).path) {
+                    Image(uiImage: image).resizable().scaledToFill()
+                } else {
+                    Image(systemName: "cube.transparent")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 56, height: 56)
+            .background(Color.gray.opacity(0.15))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(project.name).font(.headline)
+                Text(Fmt.date(project.modified)).font(.caption).foregroundStyle(.secondary)
+                Text(summary).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 2)
     }
 
-    func updateUIView(_ uiView: RoomCaptureView, context: Context) {}
+    private var summary: String {
+        var parts = ["\(project.rooms.count) stanze", "\(project.photos.count) foto"]
+        if project.mesh != nil { parts.append("mesh") }
+        return parts.joined(separator: " · ")
+    }
 }
