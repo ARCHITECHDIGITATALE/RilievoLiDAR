@@ -75,14 +75,9 @@ enum ExportService {
     }
 
     static func meshPLY(project: Project, folder: URL) async throws -> URL {
-        let preview = folder.appendingPathComponent("mesh/preview.scn")
         let url = outURL(project, "mesh.ply")
         try await Task.detached(priority: .userInitiated) {
-            guard let scene = try? SCNScene(url: preview, options: nil),
-                  let geometry = MeshGeometry.load(from: scene) else {
-                throw ExportError("Mesh non trovata: esegui prima una scansione mesh.")
-            }
-            try geometry.writePLY(to: url)
+            try meshData(folder).geometry.writePLY(to: url)
         }.value
         return url
     }

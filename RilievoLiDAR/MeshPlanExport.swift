@@ -24,8 +24,15 @@ enum MeshPlanExport {
 
     static func load(meshFolder: URL) throws -> Loaded {
         guard let scene = try? SCNScene(url: meshFolder.appendingPathComponent("preview.scn"), options: nil),
-              let g = MeshGeometry.load(from: scene), let first = g.vertices.first else {
+              var g = MeshGeometry.load(from: scene) else {
             throw ExportError("Mesh non trovata: esegui prima una scansione mesh.")
+        }
+        if let box = CropBox.load(meshFolder) {
+            let cropped = g.cropped(box)
+            if !cropped.isEmpty { g = cropped }
+        }
+        guard let first = g.vertices.first else {
+            throw ExportError("La mesh è vuota.")
         }
         var lo = first
         var hi = first

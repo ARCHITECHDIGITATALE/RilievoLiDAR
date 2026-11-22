@@ -210,6 +210,7 @@ final class MeshViewerModel: ObservableObject {
         case area = "Area"
         case nota = "Nota"
         case sezione = "Sezione"
+        case ritaglia = "Ritaglia"
         case tour = "Tour"
 
         var id: String { rawValue }
@@ -221,9 +222,22 @@ final class MeshViewerModel: ObservableObject {
             case .area: return "skew"
             case .nota: return "text.bubble"
             case .sezione: return "square.split.1x2"
+            case .ritaglia: return "crop"
             case .tour: return "figure.walk"
             }
         }
+    }
+
+    enum ViewPreset: String, CaseIterable, Identifiable {
+        case prospettiva = "3D (prospettiva)"
+        case fronte = "Fronte"
+        case retro = "Retro"
+        case sinistra = "Sinistra"
+        case destra = "Destra"
+        case alto = "Dall'alto"
+        case basso = "Dal basso"
+
+        var id: String { rawValue }
     }
 
     static let meshMask = 1
@@ -253,6 +267,16 @@ final class MeshViewerModel: ObservableObject {
             applyMeshStyle()
         }
     }
+    /// Proiezione ortogonale (senza prospettiva) della vista 3D.
+    @Published var orthographic = false {
+        didSet { applyProjection() }
+    }
+    /// Ritaglio applicato e scatola in modifica.
+    @Published private(set) var crop: CropBox?
+    @Published var draftCrop = CropBox(center: .zero, size: .one, yaw: 0, keepInside: true) {
+        didSet { if tool == .ritaglia { updateCropNode() } }
+    }
+    @Published var cropError: String?
     @Published var sectionHeight: Float = 0
     @Published var sectionCount = 0
     @Published var tourIndex = 0
@@ -267,7 +291,9 @@ final class MeshViewerModel: ObservableObject {
     let meshFolder: URL
     let scene: SCNScene?
     let keyframes: [KeyframeRecord]
-    let geometry: MeshGeometry?
+    /// Mesh completa e mesh visibile (dopo il ritaglio).
+    let fullGeometry: MeshGeometry?
+    private(set) var geometry: MeshGeometry?
     private(set) var minP = SIMD3<Float>(0, 0, 0)
     private(set) var maxP = SIMD3<Float>(1, 1, 1)
     private var markerSize: Float = 0.02
@@ -276,6 +302,7 @@ final class MeshViewerModel: ObservableObject {
     private let pathRoot = SCNNode()
     private let gridRoot = SCNNode()
     private let sectionRoot = SCNNode()
+    private let cropRoot = SCNNode()
     private var colorNode: SCNNode?
     private var whiteNode: SCNNode?
     private let orbitCamera: SCNNode
@@ -295,7 +322,19 @@ final class MeshViewerModel: ObservableObject {
         let loaded = try? SCNScene(url: meshFolder.appendingPathComponent("preview.scn"), options: nil)
         scene = loaded
         keyframes = KeyframeStore.load(meshFolder: meshFolder)
-        geometry = loaded.flatMap { MeshGeometry.load(from: $0) }
+        let full = loaded.flatMap { MeshGeometry.load(from: $0) }
+        fullGeometry = full
+        let savedCrop = CropBox.load(meshFolder)
+        var visible = full
+        var appliedCrop: CropBox? = nil
+        if let full, let savedCrop {
+            let g = full.cropped(savedCrop)
+            if !g.isEmpty {
+                visible = g
+                appliedCrop = savedCrop
+            }
+        }
+        geometry = visible
 
         if let camera = loaded?.rootNode.childNode(withName: "camera", recursively: true) {
             orbitCamera = camera
@@ -305,7 +344,8 @@ final class MeshViewerModel: ObservableObject {
             orbitCamera = node
         }
 
-        if let g = geometry, let first = g.vertices.first {
+        crop = appliedCrop
+        if let g = fullGeometry, let first = g.vertices.first {
             var lo = first
             var hi = first
             for v in g.vertices {
@@ -330,13 +370,15 @@ final class MeshViewerModel: ObservableObject {
             }
         }
         if let g = geometry, let colorNode {
+            if crop != nil { colorNode.geometry = g.coloredGeometry() }
             let node = SCNNode(geometry: g.whiteGeometry())
             node.categoryBitMask = MeshViewerModel.meshMask
             colorNode.parent?.addChildNode(node)
             whiteNode = node
         }
         applyMeshStyle()
-        for node in [annotationRoot, pathRoot, gridRoot, sectionRoot] { root.addChildNode(node) }
+        draftCrop = crop ?? CropBox.around(min: minP, max: maxP)
+        for node in [annotationRoot, pathRoot, gridRoot, sectionRoot, cropRoot] { root.addChildNode(node) }
         setupCameras(size: size)
         root.addChildNode(topCamera)
         root.addChildNode(tourCamera)
@@ -356,6 +398,130 @@ final class MeshViewerModel: ObservableObject {
     func attach(_ view: SCNView) {
         scnView = view
         view.pointOfView = orbitCamera
+        let c = (minP + maxP) / 2
+        view.defaultCameraController.target = SCNVector3(c.x, c.y, c.z)
+    }
+
+    private func show(_ g: MeshGeometry?) {
+        guard let g, !g.isEmpty else { return }
+        colorNode?.geometry = g.coloredGeometry()
+        whiteNode?.geometry = g.whiteGeometry()
+    }
+
+    // MARK: Proiezione e viste
+
+    private func applyProjection() {
+        guard let camera = orbitCamera.camera else { return }
+        camera.usesOrthographicProjection = orthographic
+        camera.orthographicScale = Double(max(simd_distance(minP, maxP), 1) * 0.55)
+    }
+
+    func setView(_ preset: ViewPreset) {
+        if tool == .tour { tool = .naviga }
+        if topView { topView = false }
+        let center = (minP + maxP) / 2
+        let dist = max(simd_distance(minP, maxP), 1) * 1.3
+        var up = SIMD3<Float>(0, 1, 0)
+        let dir: SIMD3<Float>
+        switch preset {
+        case .prospettiva: dir = simd_normalize(SIMD3<Float>(0.55, 0.6, 0.85))
+        case .fronte: dir = SIMD3<Float>(0, 0, 1)
+        case .retro: dir = SIMD3<Float>(0, 0, -1)
+        case .sinistra: dir = SIMD3<Float>(-1, 0, 0)
+        case .destra: dir = SIMD3<Float>(1, 0, 0)
+        case .alto:
+            dir = SIMD3<Float>(0, 1, 0)
+            up = SIMD3<Float>(0, 0, -1)
+        case .basso:
+            dir = SIMD3<Float>(0, -1, 0)
+            up = SIMD3<Float>(0, 0, 1)
+        }
+        orbitCamera.simdPosition = center + dir * dist
+        orbitCamera.simdLook(at: center, up: up, localFront: SIMD3<Float>(0, 0, -1))
+        scnView?.pointOfView = orbitCamera
+        scnView?.defaultCameraController.target = SCNVector3(center.x, center.y, center.z)
+        orthographic = preset != .prospettiva
+    }
+
+    // MARK: Ritaglio
+
+    var cropExtent: SIMD3<Float> { simd_max(maxP - minP, SIMD3<Float>(repeating: 0.1)) }
+
+    private func enterCrop() {
+        cropError = nil
+        draftCrop = crop ?? CropBox.around(min: minP, max: maxP)
+        show(fullGeometry)
+        updateCropNode()
+    }
+
+    private func exitCrop() {
+        for child in cropRoot.childNodes { child.removeFromParentNode() }
+        show(geometry)
+    }
+
+    private func updateCropNode() {
+        for child in cropRoot.childNodes { child.removeFromParentNode() }
+        let b = draftCrop
+        let tint: UIColor = b.keepInside ? .systemIndigo : .systemRed
+        let box = SCNBox(width: CGFloat(b.size.x), height: CGFloat(b.size.y), length: CGFloat(b.size.z), chamferRadius: 0)
+        let fill = SCNMaterial()
+        fill.diffuse.contents = tint.withAlphaComponent(0.22)
+        fill.lightingModel = .constant
+        fill.isDoubleSided = true
+        fill.writesToDepthBuffer = false
+        box.materials = [fill]
+        let node = SCNNode(geometry: box)
+        node.simdPosition = b.center
+        node.eulerAngles.y = b.yawRadians
+        node.renderingOrder = 50
+
+        // Spigoli della scatola
+        let h = b.size / 2
+        var corners: [SCNVector3] = []
+        for x in [-h.x, h.x] {
+            for y in [-h.y, h.y] {
+                for z in [-h.z, h.z] { corners.append(SCNVector3(x, y, z)) }
+            }
+        }
+        let edges: [(Int, Int)] = [(0, 1), (2, 3), (4, 5), (6, 7), (0, 2), (1, 3),
+                                   (4, 6), (5, 7), (0, 4), (1, 5), (2, 6), (3, 7)]
+        var verts: [SCNVector3] = []
+        for e in edges {
+            verts.append(corners[e.0])
+            verts.append(corners[e.1])
+        }
+        node.addChildNode(MeshViewerModel.lines(verts, color: tint))
+        cropRoot.addChildNode(node)
+        cropRoot.enumerateHierarchy { n, _ in n.categoryBitMask = MeshViewerModel.helperMask }
+    }
+
+    func resetDraftCrop() {
+        let keep = draftCrop.keepInside
+        var box = CropBox.around(min: minP, max: maxP)
+        box.keepInside = keep
+        draftCrop = box
+    }
+
+    func applyCrop() {
+        guard let full = fullGeometry else { return }
+        let g = full.cropped(draftCrop)
+        guard !g.isEmpty else {
+            cropError = "Il ritaglio eliminerebbe tutta la mesh: allarga la scatola o cambia modalità."
+            return
+        }
+        crop = draftCrop
+        draftCrop.save(meshFolder)
+        geometry = g
+        cropError = nil
+        tool = .naviga
+    }
+
+    func removeCrop() {
+        CropBox.remove(meshFolder)
+        crop = nil
+        geometry = fullGeometry
+        resetDraftCrop()
+        if tool != .ritaglia { show(geometry) }
     }
 
     // MARK: Telecamere
@@ -378,6 +544,8 @@ final class MeshViewerModel: ObservableObject {
     }
 
     private func toolChanged(from old: Tool) {
+        if old == .ritaglia && tool != .ritaglia { exitCrop() }
+        if tool == .ritaglia && old != .ritaglia { enterCrop() }
         if old == .tour && tool != .tour { exitTour() }
         if tool == .tour && old != .tour { enterTour() }
         if tool == .sezione { updateSection() } else if old == .sezione { clearSection() }
@@ -436,6 +604,8 @@ final class MeshViewerModel: ObservableObject {
 
     func handleTap(at point: CGPoint, in view: SCNView) {
         switch tool {
+        case .ritaglia:
+            return
         case .naviga, .tour, .sezione:
             guard showPath else { return }
             let hits = view.hitTest(point, options: [
@@ -970,6 +1140,17 @@ struct MeshViewerView: View {
                     roundButton(model.whiteMesh ? "paintpalette" : "circle.lefthalf.filled", active: model.whiteMesh) {
                         model.whiteMesh.toggle()
                     }
+                    roundButton("perspective", active: model.orthographic) { model.orthographic.toggle() }
+                    Menu {
+                        ForEach(MeshViewerModel.ViewPreset.allCases) { v in
+                            Button(v.rawValue) { model.setView(v) }
+                        }
+                    } label: {
+                        Image(systemName: "cube")
+                            .font(.title3)
+                            .frame(width: 48, height: 48)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
                     roundButton("map", active: model.topView) { model.topView.toggle() }
                     roundButton("squareshape.split.3x3", active: model.showGrid) { model.showGrid.toggle() }
                     roundButton("point.topleft.down.to.point.bottomright.curvepath", active: model.showPath) {
@@ -1012,6 +1193,7 @@ struct MeshViewerView: View {
         case .area: return "Tocca i vertici dell'area sulla mesh, poi \"Chiudi area\""
         case .nota: return "Tocca la mesh nel punto dove vuoi la nota"
         case .sezione: return "Sposta il cursore per scegliere la quota del taglio"
+        case .ritaglia: return "Regola la scatola con i cursori, poi tocca Applica"
         case .tour: return "Percorri la scansione dalle posizioni delle foto"
         }
     }
@@ -1024,6 +1206,12 @@ struct MeshViewerView: View {
         case .naviga:
             VStack(alignment: .leading, spacing: 4) {
                 Text(model.sizeText)
+                if model.crop != nil {
+                    HStack {
+                        Label("Ritaglio attivo", systemImage: "crop").font(.caption).foregroundStyle(.secondary)
+                        Button("Rimuovi ritaglio") { model.removeCrop() }.font(.caption)
+                    }
+                }
                 scaleRow
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1033,6 +1221,8 @@ struct MeshViewerView: View {
             notesPanel
         case .sezione:
             sectionPanel
+        case .ritaglia:
+            cropPanel
         case .tour:
             tourPanel
         }
@@ -1156,6 +1346,58 @@ struct MeshViewerView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(model.sectionCount == 0)
             }
+        }
+    }
+
+    private func cropSlider(_ title: String, _ value: Binding<Float>, _ range: ClosedRange<Float>) -> some View {
+        let upper = max(range.upperBound, range.lowerBound + 0.01)
+        return HStack(spacing: 8) {
+            Text(title).font(.caption).frame(width: 92, alignment: .leading)
+            Slider(value: Binding(get: { Double(value.wrappedValue) }, set: { value.wrappedValue = Float($0) }),
+                   in: Double(range.lowerBound)...Double(upper))
+            Text(Fmt.m(value.wrappedValue)).font(.caption.monospacedDigit()).frame(width: 46, alignment: .trailing)
+        }
+    }
+
+    private var cropPanel: some View {
+        let lo: SIMD3<Float> = model.minP - SIMD3<Float>(repeating: 1)
+        let hi: SIMD3<Float> = model.maxP + SIMD3<Float>(repeating: 1)
+        let ext: SIMD3<Float> = model.cropExtent * 1.5
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Picker("Modalità", selection: $model.draftCrop.keepInside) {
+                    Text("Tieni dentro (crop in)").tag(true)
+                    Text("Togli dentro (crop out)").tag(false)
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 380)
+                Spacer()
+                Button("Ripristina scatola") { model.resetDraftCrop() }
+                if model.crop != nil {
+                    Button("Rimuovi ritaglio", role: .destructive) { model.removeCrop() }
+                }
+                Button("Applica") { model.applyCrop() }
+                    .buttonStyle(.borderedProminent)
+            }
+            if let error = model.cropError {
+                Text(error).font(.caption).foregroundStyle(.red)
+            }
+            HStack(alignment: .top, spacing: 20) {
+                VStack(spacing: 2) {
+                    cropSlider("Sposta X", $model.draftCrop.center.x, lo.x...hi.x)
+                    cropSlider("Sposta Z", $model.draftCrop.center.z, lo.z...hi.z)
+                    cropSlider("Sposta Y", $model.draftCrop.center.y, lo.y...hi.y)
+                    cropSlider("Rotazione °", $model.draftCrop.yaw, -180...180)
+                }
+                VStack(spacing: 2) {
+                    cropSlider("Larghezza", $model.draftCrop.size.x, 0.05...ext.x)
+                    cropSlider("Profondità", $model.draftCrop.size.z, 0.05...ext.z)
+                    cropSlider("Altezza", $model.draftCrop.size.y, 0.05...ext.y)
+                }
+            }
+            Text("Il ritaglio vale anche per sezione, pianta PDF/DXF, PLY e USDZ. Si può rimuovere in ogni momento.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
