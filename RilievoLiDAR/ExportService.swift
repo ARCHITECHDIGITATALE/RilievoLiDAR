@@ -98,4 +98,45 @@ enum ExportService {
         }.value
         return url
     }
+
+    // MARK: Dalla mesh (quando non ci sono stanze RoomPlan)
+
+    private static func meshData(_ folder: URL) throws -> MeshPlanExport.Loaded {
+        try MeshPlanExport.load(meshFolder: folder.appendingPathComponent("mesh", isDirectory: true))
+    }
+
+    static func meshUSDZ(project: Project, folder: URL) async throws -> URL {
+        let url = outURL(project, "mesh.usdz")
+        try await Task.detached(priority: .userInitiated) {
+            try MeshPlanExport.usdz(try meshData(folder), to: url)
+        }.value
+        return url
+    }
+
+    static func meshPlanPDF(project: Project, folder: URL) async throws -> URL {
+        let url = outURL(project, "pianta_mesh.pdf")
+        let photos = project.photos.enumerated().map { (number: $0.offset + 1, record: $0.element) }
+        let name = project.name
+        try await Task.detached(priority: .userInitiated) {
+            try MeshPlanExport.pdf(try meshData(folder), projectName: name, photos: photos,
+                                   projectFolder: folder, to: url)
+        }.value
+        return url
+    }
+
+    static func meshPlanDXF(project: Project, folder: URL) async throws -> URL {
+        let url = outURL(project, "pianta_mesh.dxf")
+        try await Task.detached(priority: .userInitiated) {
+            try MeshPlanExport.dxf(try meshData(folder)).write(to: url, atomically: true, encoding: .ascii)
+        }.value
+        return url
+    }
+
+    static func meshCSV(project: Project, folder: URL) async throws -> URL {
+        let url = outURL(project, "misure_mesh.csv")
+        try await Task.detached(priority: .userInitiated) {
+            try MeshPlanExport.csv(try meshData(folder)).write(to: url, atomically: true, encoding: .utf8)
+        }.value
+        return url
+    }
 }

@@ -246,6 +246,13 @@ final class MeshViewerModel: ObservableObject {
             if tool != .tour { scnView?.pointOfView = topView ? topCamera : orbitCamera }
         }
     }
+    /// Mesh monocolore bianca con ombreggiatura invece dei colori delle foto.
+    @Published var whiteMesh = UserDefaults.standard.object(forKey: "meshWhite") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(whiteMesh, forKey: "meshWhite")
+            applyMeshStyle()
+        }
+    }
     @Published var sectionHeight: Float = 0
     @Published var sectionCount = 0
     @Published var tourIndex = 0
@@ -269,6 +276,8 @@ final class MeshViewerModel: ObservableObject {
     private let pathRoot = SCNNode()
     private let gridRoot = SCNNode()
     private let sectionRoot = SCNNode()
+    private var colorNode: SCNNode?
+    private var whiteNode: SCNNode?
     private let orbitCamera: SCNNode
     private let topCamera = SCNNode()
     private let tourCamera = SCNNode()
@@ -309,10 +318,24 @@ final class MeshViewerModel: ObservableObject {
         if maxP.y - minP.y < 0.05 { maxP.y = minP.y + 0.05 }
         let size = simd_distance(minP, maxP)
         markerSize = min(max(size * 0.004, 0.008), 0.05)
-        sectionHeight = min(minP.y + 1.0, maxP.y)
+        let floor = geometry.map { MeshPlanExport.floorY($0.vertices, fallback: minP.y) } ?? minP.y
+        sectionHeight = min(max(floor + MeshPlanExport.sectionAboveFloor, minP.y), maxP.y)
 
         guard let loaded else { return }
         let root = loaded.rootNode
+        root.enumerateHierarchy { node, stop in
+            if let g = node.geometry, g.elements.first?.primitiveType == .triangles {
+                colorNode = node
+                stop.pointee = true
+            }
+        }
+        if let g = geometry, let colorNode {
+            let node = SCNNode(geometry: g.whiteGeometry())
+            node.categoryBitMask = MeshViewerModel.meshMask
+            colorNode.parent?.addChildNode(node)
+            whiteNode = node
+        }
+        applyMeshStyle()
         for node in [annotationRoot, pathRoot, gridRoot, sectionRoot] { root.addChildNode(node) }
         setupCameras(size: size)
         root.addChildNode(topCamera)
@@ -322,6 +345,12 @@ final class MeshViewerModel: ObservableObject {
         gridRoot.isHidden = true
         annotations = MeshViewerModel.loadAnnotations(meshFolder)
         rebuildAnnotations()
+    }
+
+    private func applyMeshStyle() {
+        guard whiteNode != nil else { return }
+        whiteNode?.isHidden = !whiteMesh
+        colorNode?.isHidden = whiteMesh
     }
 
     func attach(_ view: SCNView) {
@@ -452,17 +481,7 @@ final class MeshViewerModel: ObservableObject {
     }
 
     func valueText(_ m: SavedMeasure) -> String {
-        let p = m.vectors
-        if m.kind == "area" {
-            return "\(Fmt.m(Geo.area(p) * scale * scale)) m² (in pianta \(Fmt.m(Geo.planArea(p) * scale * scale)) m²)"
-        }
-        let total = Fmt.m(Geo.length(p) * scale)
-        if p.count == 2 {
-            let d = p[1] - p[0]
-            let horizontal = simd_length(SIMD2<Float>(d.x, d.z)) * scale
-            return "\(total) m (orizz. \(Fmt.m(horizontal)) · vert. \(Fmt.m(abs(d.y) * scale)))"
-        }
-        return "\(total) m (\(p.count - 1) tratti)"
+        MeshPlanExport.valueText(m, scale: scale)
     }
 
     func undoPoint() {
@@ -649,32 +668,7 @@ final class MeshViewerModel: ObservableObject {
     }
 
     func exportSectionDXF() {
-        var s = "0\nSECTION\n2\nENTITIES\n"
-        func f(_ v: Float) -> String { String(format: "%.4f", v) }
-        func plan(_ p: SIMD3<Float>) -> SIMD2<Float> { SIMD2<Float>(p.x * scale, -p.z * scale) }
-        func line(_ a: SIMD2<Float>, _ b: SIMD2<Float>, _ layer: String) {
-            s += "0\nLINE\n8\n\(layer)\n10\n\(f(a.x))\n20\n\(f(a.y))\n30\n0.0\n11\n\(f(b.x))\n21\n\(f(b.y))\n31\n0.0\n"
-        }
-        func text(_ t: String, _ p: SIMD2<Float>, _ layer: String) {
-            s += "0\nTEXT\n8\n\(layer)\n10\n\(f(p.x))\n20\n\(f(p.y))\n30\n0.0\n40\n0.08\n1\n\(PlanDXF.ascii(t))\n"
-        }
-        for seg in sectionSegments { line(plan(seg.0), plan(seg.1), "SEZIONE") }
-        for (i, m) in annotations.measures.enumerated() {
-            let p = m.vectors.map { plan($0) }
-            if p.count > 1 {
-                for j in 1..<p.count { line(p[j - 1], p[j], "MISURE") }
-                if m.kind == "area", let first = p.first, let last = p.last { line(last, first, "MISURE") }
-            }
-            text("\(i + 1): \(valueText(m))", plan(Geo.centroid(m.vectors)), "MISURE")
-        }
-        for (i, n) in annotations.notes.enumerated() where n.point.count == 3 {
-            text("N\(i + 1) \(n.text)", plan(SIMD3<Float>(n.point[0], n.point[1], n.point[2])), "NOTE")
-        }
-        if keyframes.count > 1 {
-            let pts = keyframes.map { plan(simd_float4x4(floatArray: $0.transform).translation) }
-            for j in 1..<pts.count { line(pts[j - 1], pts[j], "PERCORSO") }
-        }
-        s += "0\nENDSEC\n0\nEOF\n"
+        let s = MeshPlanExport.dxf(segments: sectionSegments, annotations: annotations, keyframes: keyframes)
         let quota = String(format: "%.2f", sectionHeight - minP.y).replacingOccurrences(of: ".", with: ",")
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("Sezione_quota_\(quota)m.dxf")
         do {
@@ -973,6 +967,9 @@ struct MeshViewerView: View {
                 Spacer()
 
                 VStack(spacing: 10) {
+                    roundButton(model.whiteMesh ? "paintpalette" : "circle.lefthalf.filled", active: model.whiteMesh) {
+                        model.whiteMesh.toggle()
+                    }
                     roundButton("map", active: model.topView) { model.topView.toggle() }
                     roundButton("squareshape.split.3x3", active: model.showGrid) { model.showGrid.toggle() }
                     roundButton("point.topleft.down.to.point.bottomright.curvepath", active: model.showPath) {

@@ -196,53 +196,60 @@ struct ProjectDetailView: View {
     }
 
     private func exportSection(_ project: Project) -> some View {
-        let noRooms = project.rooms.isEmpty
+        let hasRooms = !project.rooms.isEmpty
+        let hasMesh = project.mesh != nil
+        let fromMesh = !hasRooms && hasMesh
         let f = folder
         return Section {
             Button {
                 runExport("Creazione del modello…", preview: true) {
-                    try await ExportService.roomsUSDZ(project: project, folder: f)
+                    if hasRooms { return try await ExportService.roomsUSDZ(project: project, folder: f) }
+                    return try await ExportService.meshUSDZ(project: project, folder: f)
                 }
             } label: {
-                Label("Anteprima 3D delle stanze", systemImage: "cube")
+                Label(fromMesh ? "Anteprima 3D della mesh" : "Anteprima 3D delle stanze", systemImage: "cube")
             }
-            .disabled(noRooms)
+            .disabled(!hasRooms && !hasMesh)
 
             Button {
                 runExport("Creazione del modello…") {
-                    try await ExportService.roomsUSDZ(project: project, folder: f)
+                    if hasRooms { return try await ExportService.roomsUSDZ(project: project, folder: f) }
+                    return try await ExportService.meshUSDZ(project: project, folder: f)
                 }
             } label: {
-                Label("Modello stanze (USDZ)", systemImage: "square.and.arrow.up")
+                Label(fromMesh ? "Modello mesh (USDZ)" : "Modello stanze (USDZ)", systemImage: "square.and.arrow.up")
             }
-            .disabled(noRooms)
+            .disabled(!hasRooms && !hasMesh)
 
             Button {
                 runExport("Creazione della pianta…") {
-                    try ExportService.planPDF(project: project, folder: f)
+                    if hasRooms { return try ExportService.planPDF(project: project, folder: f) }
+                    return try await ExportService.meshPlanPDF(project: project, folder: f)
                 }
             } label: {
                 Label("Pianta quotata con foto (PDF)", systemImage: "doc.richtext")
             }
-            .disabled(noRooms)
+            .disabled(!hasRooms && !hasMesh)
 
             Button {
                 runExport("Creazione del DXF…") {
-                    try ExportService.planDXF(project: project, folder: f)
+                    if hasRooms { return try ExportService.planDXF(project: project, folder: f) }
+                    return try await ExportService.meshPlanDXF(project: project, folder: f)
                 }
             } label: {
                 Label("Pianta per CAD (DXF)", systemImage: "square.and.pencil")
             }
-            .disabled(noRooms)
+            .disabled(!hasRooms && !hasMesh)
 
             Button {
                 runExport("Creazione della tabella…") {
-                    try ExportService.measuresCSV(project: project, folder: f)
+                    if hasRooms { return try ExportService.measuresCSV(project: project, folder: f) }
+                    return try await ExportService.meshCSV(project: project, folder: f)
                 }
             } label: {
                 Label("Misure (CSV per Excel)", systemImage: "tablecells")
             }
-            .disabled(noRooms)
+            .disabled(!hasRooms && !hasMesh)
 
             Button {
                 runExport("Compressione di mesh e foto…") {
@@ -264,7 +271,9 @@ struct ProjectDetailView: View {
         } header: {
             Text("Esporta e condividi")
         } footer: {
-            Text("Il file si apre nel menu di condivisione: puoi inviarlo per mail, AirDrop, Drive o salvarlo in File.")
+            Text(fromMesh
+                 ? "Senza stanze scansionate, pianta, DXF e misure sono ricavati dalla mesh (sezione a 1,10 m dal pavimento, più le misure salvate nel visualizzatore). Il file si apre nel menu di condivisione."
+                 : "Il file si apre nel menu di condivisione: puoi inviarlo per mail, AirDrop, Drive o salvarlo in File.")
         }
     }
 
