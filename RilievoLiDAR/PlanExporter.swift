@@ -88,15 +88,23 @@ enum PlanBuilder {
         let windows = room.windows.map { segment($0, .window) }
         let openings = room.openings.map { segment($0, .opening) }
 
-        let objects: [PlanObject] = room.objects.map { o in
-            let t = o.transform
+        func planObject(_ o: CapturedRoom.Object) -> PlanObject {
+            let t: simd_float4x4 = o.transform
             let c = SIMD3<Float>(t.columns.3.x, t.columns.3.y, t.columns.3.z)
-            let ax = SIMD3<Float>(t.columns.0.x, t.columns.0.y, t.columns.0.z) * (o.dimensions.x / 2)
-            let az = SIMD3<Float>(t.columns.2.x, t.columns.2.y, t.columns.2.z) * (o.dimensions.z / 2)
-            let corners = [c - ax - az, c + ax - az, c + ax + az, c - ax + az].map { plan($0) }
+            let halfX: Float = o.dimensions.x / 2
+            let halfZ: Float = o.dimensions.z / 2
+            let ax: SIMD3<Float> = SIMD3<Float>(t.columns.0.x, t.columns.0.y, t.columns.0.z) * halfX
+            let az: SIMD3<Float> = SIMD3<Float>(t.columns.2.x, t.columns.2.y, t.columns.2.z) * halfZ
+            let p0: SIMD3<Float> = c - ax - az
+            let p1: SIMD3<Float> = c + ax - az
+            let p2: SIMD3<Float> = c + ax + az
+            let p3: SIMD3<Float> = c - ax + az
+            let corners: [SIMD2<Float>] = [plan(p0), plan(p1), plan(p2), plan(p3)]
             let key = String(describing: o.category)
-            return PlanObject(name: objectNames[key] ?? key, corners: corners, size: o.dimensions, center: plan(c))
+            let label: String = objectNames[key] ?? key
+            return PlanObject(name: label, corners: corners, size: o.dimensions, center: plan(c))
         }
+        let objects: [PlanObject] = room.objects.map(planObject)
 
         var area: Float = 0
         if let floor = room.floors.first {
