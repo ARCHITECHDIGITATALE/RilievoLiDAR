@@ -61,6 +61,10 @@ final class MeshScanner: NSObject, ObservableObject, ARSessionDelegate {
     private var busy = false
     private var lastTime: TimeInterval = 0
     private var lastTransform: simd_float4x4?
+    private var prevFrameTransform: simd_float4x4?
+    private var prevFrameTime: TimeInterval = 0
+    /// Avviso a schermo: rallenta per avere foto nitide.
+    @Published var movingTooFast = false
     private var keyframes: [KeyframeRecord] = []
     private var meshFolder: URL?
     private let ioQueue = DispatchQueue(label: "rilievo.keyframes")
@@ -115,10 +119,24 @@ final class MeshScanner: NSObject, ObservableObject, ARSessionDelegate {
     // MARK: ARSessionDelegate (chiamato sul thread principale)
 
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
-        guard isRecording, !paused, !busy, let folder = meshFolder, keyframes.count < maxKeyframes else { return }
+        // Velocità dell'iPad tra due fotogrammi consecutivi: se si muove troppo la foto è mossa.
+        let t = frame.camera.transform
+        var tooFast = false
+        if let prev = prevFrameTransform {
+            let dt = Float(max(frame.timestamp - prevFrameTime, 1e-3))
+            let speed = simd_distance(t.translation, prev.translation) / dt
+            let f1 = -SIMD3<Float>(t.columns.2.x, t.columns.2.y, t.columns.2.z)
+            let f0 = -SIMD3<Float>(prev.columns.2.x, prev.columns.2.y, prev.columns.2.z)
+            let turn = acos(max(-1, min(1, simd_dot(f0, f1)))) * 180 / Float.pi / dt
+            tooFast = speed > 0.35 || turn > 25
+        }
+        prevFrameTransform = t
+        prevFrameTime = frame.timestamp
+        if isRecording && tooFast != movingTooFast { movingTooFast = tooFast }
+
+        guard isRecording, !paused, !busy, !tooFast, let folder = meshFolder, keyframes.count < maxKeyframes else { return }
         guard case .normal = frame.camera.trackingState else { return }
 
-        let t = frame.camera.transform
         if let last = lastTransform {
             if frame.timestamp - lastTime < 0.5 { return }
             let moved = simd_distance(t.translation, last.translation)
@@ -283,6 +301,11 @@ struct MeshScanView: View {
                     .disabled(scanner.phase == .processing)
                     Spacer()
                     if scanner.phase == .scanning {
+                        if scanner.movingTooFast && !scanner.paused {
+                            Label("Rallenta", systemImage: "tortoise.fill")
+                                .font(.subheadline.bold())
+                                .foregroundStyle(.orange)
+                        }
                         Text(scanner.paused ? "In pausa" : "Fotogrammi: \(scanner.keyframeCount)/\(scanner.maxKeyframes)")
                             .font(.subheadline.monospacedDigit())
                     }

@@ -47,8 +47,10 @@ enum MeshExporter {
         let exportDir = folder.appendingPathComponent("export", isDirectory: true)
         try FileManager.default.createDirectory(at: exportDir, withIntermediateDirectories: true)
 
-        let V = mesh.vertices
-        let I = mesh.indices
+        progress(0.01, "Pulizia della mesh…")
+        let clean = MeshCleanup.clean(mesh)
+        let V = clean.vertices
+        let I = clean.indices
         let vCount = V.count
         let fCount = I.count / 3
         guard fCount > 0 else {
@@ -70,12 +72,13 @@ enum MeshExporter {
                             depth: depth, dw: kf.depthWidth, dh: kf.depthHeight))
         }
 
-        // 2. Scelta della foto migliore per ogni triangolo
-        var faceCam = [Int32](repeating: -1, count: fCount)
-        var faceUV = [SIMD2<Float>](repeating: SIMD2<Float>(0, 0), count: fCount * 3)
+        // 2. Foto candidate per ogni triangolo (le migliori K)
+        let K = 4
+        var candCam = [Int32](repeating: -1, count: fCount * K)
+        var candScore = [Float](repeating: 0, count: fCount * K)
         for f in 0..<fCount {
             if f % 4000 == 0 {
-                progress(0.05 + 0.6 * Double(f) / Double(fCount), "Associazione delle foto alla mesh…")
+                progress(0.05 + 0.4 * Double(f) / Double(fCount), "Associazione delle foto alla mesh…")
             }
             if cams.isEmpty { break }
             let a = V[Int(I[f * 3])]
@@ -86,35 +89,79 @@ enum MeshExporter {
             if len < 1e-10 { continue }
             let n = cr / len
             let centroid = (a + b + c) / 3
-
-            var bestScore: Float = 0
-            var best = -1
-            var uvA = SIMD2<Float>(0, 0)
-            var uvB = SIMD2<Float>(0, 0)
-            var uvC = SIMD2<Float>(0, 0)
             for k in 0..<cams.count {
                 let cam = cams[k]
                 let toCam = cam.position - centroid
                 let dist = simd_length(toCam)
                 if dist > 5 || dist < 0.1 { continue }
                 let facing = abs(simd_dot(n, toCam / dist))
-                if facing < 0.25 { continue }
-                let score = facing / (dist * dist)
-                if score <= bestScore { continue }
+                if facing < 0.3 { continue }
                 guard let pa = cam.project(a), let pb = cam.project(b), let pc = cam.project(c),
                       let pm = cam.project(centroid) else { continue }
-                if let d = cam.depthAt(u: pm.x, v: pm.y), pm.z - d > 0.1 { continue } // nascosto da altro
-                bestScore = score
-                best = k
-                uvA = SIMD2<Float>(pa.x, pa.y)
-                uvB = SIMD2<Float>(pb.x, pb.y)
-                uvC = SIMD2<Float>(pc.x, pc.y)
+                if let d = cam.depthAt(u: pm.x, v: pm.y), pm.z - d > 0.08 { continue } // nascosto da altro
+                // Preferisce foto vicine, frontali e con il triangolo lontano dai bordi dell'immagine
+                let ux = min(pm.x, cam.width - pm.x) / (cam.width * 0.5)
+                let uy = min(pm.y, cam.height - pm.y) / (cam.height * 0.5)
+                let border = 0.6 + 0.4 * min(1, min(ux, uy) * 3)
+                _ = pa; _ = pb; _ = pc
+                let score = facing * facing / (dist * dist) * border
+                // Inserimento ordinato tra le K migliori
+                var slot = -1
+                for j in 0..<K where score > candScore[f * K + j] {
+                    slot = j
+                    break
+                }
+                if slot < 0 { continue }
+                var j = K - 1
+                while j > slot {
+                    candCam[f * K + j] = candCam[f * K + j - 1]
+                    candScore[f * K + j] = candScore[f * K + j - 1]
+                    j -= 1
+                }
+                candCam[f * K + slot] = Int32(k)
+                candScore[f * K + slot] = score
             }
-            if best >= 0 {
-                faceCam[f] = Int32(best)
-                faceUV[f * 3] = uvA
-                faceUV[f * 3 + 1] = uvB
-                faceUV[f * 3 + 2] = uvC
+        }
+
+        // 3. Scelta coerente tra triangoli vicini (meno cuciture tra una foto e l'altra)
+        progress(0.46, "Uniformità delle texture…")
+        var faceCam = [Int32](repeating: -1, count: fCount)
+        for f in 0..<fCount { faceCam[f] = candCam[f * K] }
+        let neighbors = MeshCleanup.faceNeighbors(I)
+        for _ in 0..<4 {
+            var next = faceCam
+            for f in 0..<fCount where candCam[f * K] >= 0 {
+                let best = candScore[f * K]
+                var chosen = faceCam[f]
+                var chosenValue: Float = -1
+                for j in 0..<K {
+                    let cam = candCam[f * K + j]
+                    if cam < 0 { break }
+                    var same: Float = 0
+                    for e in 0..<3 {
+                        let g = neighbors[f * 3 + e]
+                        if g >= 0 && faceCam[Int(g)] == cam { same += 1 }
+                    }
+                    let value = candScore[f * K + j] / best + 0.35 * same
+                    if value > chosenValue {
+                        chosenValue = value
+                        chosen = cam
+                    }
+                }
+                next[f] = chosen
+            }
+            faceCam = next
+        }
+
+        var faceUV = [SIMD2<Float>](repeating: SIMD2<Float>(0, 0), count: fCount * 3)
+        for f in 0..<fCount where faceCam[f] >= 0 {
+            let cam = cams[Int(faceCam[f])]
+            for j in 0..<3 {
+                if let p = cam.project(V[Int(I[f * 3 + j])]) {
+                    faceUV[f * 3 + j] = SIMD2<Float>(p.x, p.y)
+                } else {
+                    faceCam[f] = -1
+                }
             }
         }
 
@@ -125,13 +172,13 @@ enum MeshExporter {
             if k >= 0 { groups[k].append(f) } else { untextured.append(f) }
         }
 
-        // 3. Colori per vertice (per l'anteprima e per i programmi che non leggono le texture)
-        progress(0.66, "Colorazione della mesh…")
+        // 4. Colori per vertice (per il PLY e i programmi che non leggono le texture)
+        progress(0.5, "Colorazione della mesh…")
         var colorSum = [SIMD3<Float>](repeating: SIMD3<Float>(0, 0, 0), count: vCount)
         var colorCount = [Float](repeating: 0, count: vCount)
         for k in 0..<cams.count where !groups[k].isEmpty {
             if k % 5 == 0 {
-                progress(0.66 + 0.18 * Double(k) / Double(max(cams.count, 1)), "Colorazione della mesh…")
+                progress(0.5 + 0.15 * Double(k) / Double(max(cams.count, 1)), "Colorazione della mesh…")
             }
             let cam = cams[k]
             let url = exportDir.appendingPathComponent(cam.imageFile)
@@ -157,8 +204,22 @@ enum MeshExporter {
             colors[i] = colorSum[i] / colorCount[i]
         }
 
-        // 4. OBJ + MTL
-        progress(0.85, "Scrittura del file OBJ…")
+        // 5. Atlante delle texture (ritagli delle foto impacchettati in poche immagini)
+        progress(0.66, "Creazione delle texture…")
+        let atlas = try TextureAtlas.build(faceCam: faceCam, faceUV: faceUV, indices: I, cams: cams,
+                                           exportDir: exportDir) { p in
+            progress(0.66 + 0.16 * p, "Creazione delle texture…")
+        }
+
+        // Mesh con texture per il visualizzatore dell'app
+        var tPositions: [SIMD3<Float>] = []
+        tPositions.reserveCapacity(fCount * 3)
+        for i in I { tPositions.append(V[Int(i)]) }
+        try TexturedMesh(positions: tPositions, uvs: atlas.uv, pages: atlas.page, pageCount: atlas.pages)
+            .save(to: folder.appendingPathComponent(TexturedMesh.fileName))
+
+        // 6. OBJ + MTL
+        progress(0.83, "Scrittura del file OBJ…")
         let writer = try TextWriter(url: exportDir.appendingPathComponent("modello.obj"))
         writer.write("# Rilievo LiDAR - mesh texturizzata\n# Unita: metri, asse Y verso l'alto\nmtllib modello.mtl\n")
         for i in 0..<vCount {
@@ -166,42 +227,26 @@ enum MeshExporter {
             let c = colors[i]
             writer.write(String(format: "v %.4f %.4f %.4f %.3f %.3f %.3f\n", p.x, p.y, p.z, c.x, c.y, c.z))
         }
-        for k in 0..<cams.count where !groups[k].isEmpty {
-            let cam = cams[k]
-            for f in groups[k] {
-                for j in 0..<3 {
-                    let uv = faceUV[f * 3 + j]
-                    writer.write(String(format: "vt %.5f %.5f\n", uv.x / cam.width, 1 - uv.y / cam.height))
-                }
+        for f in 0..<fCount {
+            for j in 0..<3 {
+                let uv = atlas.uv[f * 3 + j]
+                writer.write(String(format: "vt %.6f %.6f\n", uv.x, 1 - uv.y))
             }
         }
-        var mtl = "# Materiali: ogni foto e' una texture\n"
-        var vt = 1
-        for k in 0..<cams.count where !groups[k].isEmpty {
-            let cam = cams[k]
-            let material = String(format: "foto_%04d", cam.index)
-            mtl += "newmtl \(material)\nKa 1 1 1\nKd 1 1 1\nKs 0 0 0\nd 1\nillum 1\nmap_Kd \(cam.imageFile)\n\n"
-            writer.write("usemtl \(material)\n")
-            for f in groups[k] {
-                let a = Int(I[f * 3]) + 1
-                let b = Int(I[f * 3 + 1]) + 1
-                let c = Int(I[f * 3 + 2]) + 1
-                writer.write("f \(a)/\(vt) \(b)/\(vt + 1) \(c)/\(vt + 2)\n")
-                vt += 3
-            }
-        }
-        if !untextured.isEmpty {
-            mtl += "newmtl senza_foto\nKa 1 1 1\nKd 0.7 0.7 0.7\nKs 0 0 0\nd 1\nillum 1\n"
-            writer.write("usemtl senza_foto\n")
-            for f in untextured {
-                writer.write("f \(Int(I[f * 3]) + 1) \(Int(I[f * 3 + 1]) + 1) \(Int(I[f * 3 + 2]) + 1)\n")
+        var mtl = "# Materiali: atlanti di texture ricavati dalle foto\n"
+        for p in 0..<atlas.pages {
+            mtl += "newmtl texture_\(p)\nKa 1 1 1\nKd 1 1 1\nKs 0 0 0\nd 1\nillum 1\nmap_Kd texture_\(p).jpg\n\n"
+            writer.write("usemtl texture_\(p)\n")
+            for f in 0..<fCount where Int(atlas.page[f]) == p {
+                let vt = f * 3 + 1
+                writer.write("f \(Int(I[f * 3]) + 1)/\(vt) \(Int(I[f * 3 + 1]) + 1)/\(vt + 1) \(Int(I[f * 3 + 2]) + 1)/\(vt + 2)\n")
             }
         }
         writer.close()
         try mtl.write(to: exportDir.appendingPathComponent("modello.mtl"), atomically: true, encoding: .utf8)
 
         // 5. Pose delle camere per la fotogrammetria
-        progress(0.93, "Salvataggio delle posizioni delle foto…")
+        progress(0.9, "Salvataggio delle posizioni delle foto…")
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted]
         try encoder.encode(keyframes).write(to: exportDir.appendingPathComponent("camere.json"))
@@ -294,9 +339,9 @@ enum MeshExporter {
     =============================
 
     modello.obj / modello.mtl
-      Mesh LiDAR in metri, asse Y verso l'alto. Ogni triangolo usa come texture
-      la foto che lo inquadra meglio (cartella foto/). I vertici contengono anche
-      il colore (utile in CloudCompare e MeshLab).
+      Mesh LiDAR in metri, asse Y verso l'alto, con texture ricavate dalle foto
+      (texture_0.jpg, texture_1.jpg...). I vertici contengono anche il colore
+      (utile in CloudCompare e MeshLab).
       Blender: File > Import > Wavefront (.obj), poi vista "Material Preview".
 
     foto/

@@ -293,6 +293,9 @@ final class MeshViewerModel: ObservableObject {
     let keyframes: [KeyframeRecord]
     /// Mesh completa e mesh visibile (dopo il ritaglio).
     let fullGeometry: MeshGeometry?
+    /// Mesh con atlante di texture (scansioni nuove); nil per le scansioni vecchie.
+    private let textured: TexturedMesh?
+    private let atlasImages: [UIImage]
     private(set) var geometry: MeshGeometry?
     private(set) var minP = SIMD3<Float>(0, 0, 0)
     private(set) var maxP = SIMD3<Float>(1, 1, 1)
@@ -324,6 +327,10 @@ final class MeshViewerModel: ObservableObject {
         keyframes = KeyframeStore.load(meshFolder: meshFolder)
         let full = loaded.flatMap { MeshGeometry.load(from: $0) }
         fullGeometry = full
+        let tex = TexturedMesh.load(meshFolder: meshFolder)
+        let images = tex.map { TexturedMesh.loadPages(meshFolder: meshFolder, count: $0.pageCount) } ?? []
+        textured = images.isEmpty ? nil : tex
+        atlasImages = images
         let savedCrop = CropBox.load(meshFolder)
         var visible = full
         var appliedCrop: CropBox? = nil
@@ -370,12 +377,12 @@ final class MeshViewerModel: ObservableObject {
             }
         }
         if let g = geometry, let colorNode {
-            if crop != nil { colorNode.geometry = g.coloredGeometry() }
             let node = SCNNode(geometry: g.whiteGeometry())
             node.categoryBitMask = MeshViewerModel.meshMask
             colorNode.parent?.addChildNode(node)
             whiteNode = node
         }
+        if textured != nil || crop != nil { show(geometry, crop: crop) }
         applyMeshStyle()
         draftCrop = crop ?? CropBox.around(min: minP, max: maxP)
         for node in [annotationRoot, pathRoot, gridRoot, sectionRoot, cropRoot] { root.addChildNode(node) }
@@ -402,10 +409,15 @@ final class MeshViewerModel: ObservableObject {
         view.defaultCameraController.target = SCNVector3(c.x, c.y, c.z)
     }
 
-    private func show(_ g: MeshGeometry?) {
-        guard let g, !g.isEmpty else { return }
-        colorNode?.geometry = g.coloredGeometry()
-        whiteNode?.geometry = g.whiteGeometry()
+    /// Aggiorna la mesh visibile: con texture se disponibile, altrimenti colori per vertice.
+    private func show(_ g: MeshGeometry?, crop box: CropBox?) {
+        if let tex = textured {
+            let t = box.map { tex.cropped($0) } ?? tex
+            if let geo = t.scnGeometry(images: atlasImages) { colorNode?.geometry = geo }
+        } else if let g, !g.isEmpty {
+            colorNode?.geometry = g.coloredGeometry()
+        }
+        if let g, !g.isEmpty { whiteNode?.geometry = g.whiteGeometry() }
     }
 
     // MARK: Proiezione e viste
@@ -450,13 +462,13 @@ final class MeshViewerModel: ObservableObject {
     private func enterCrop() {
         cropError = nil
         draftCrop = crop ?? CropBox.around(min: minP, max: maxP)
-        show(fullGeometry)
+        show(fullGeometry, crop: nil)
         updateCropNode()
     }
 
     private func exitCrop() {
         for child in cropRoot.childNodes { child.removeFromParentNode() }
-        show(geometry)
+        show(geometry, crop: crop)
     }
 
     private func updateCropNode() {
@@ -521,7 +533,7 @@ final class MeshViewerModel: ObservableObject {
         crop = nil
         geometry = fullGeometry
         resetDraftCrop()
-        if tool != .ritaglia { show(geometry) }
+        if tool != .ritaglia { show(geometry, crop: nil) }
     }
 
     // MARK: Telecamere
