@@ -1,6 +1,6 @@
 import SwiftUI
 import ARKit
-import RealityKit
+import SceneKit
 import CoreImage
 import Metal
 
@@ -70,12 +70,16 @@ final class MeshScanner: NSObject, ObservableObject, ARSessionDelegate {
     private let ioQueue = DispatchQueue(label: "rilievo.keyframes")
     private let ciContext = CIContext()
 
+    /// Disegno della mesh durante la scansione (griglia bianca + zone da riprendere in fucsia).
+    let overlay = LiveMeshOverlay()
+
     @MainActor
-    func attach(_ arView: ARView) {
-        session = arView.session
-        arView.session.delegate = self
-        arView.debugOptions.insert(.showSceneUnderstanding)
-        arView.session.run(MeshScanner.makeConfiguration())
+    func attach(_ view: ARSCNView) {
+        session = view.session
+        view.delegate = overlay
+        view.automaticallyUpdatesLighting = false
+        view.session.delegate = self
+        view.session.run(MeshScanner.makeConfiguration())
     }
 
     static func makeConfiguration() -> ARWorldTrackingConfiguration {
@@ -107,6 +111,7 @@ final class MeshScanner: NSObject, ObservableObject, ARSessionDelegate {
         busy = false
         progress = 0
         session.run(MeshScanner.makeConfiguration(), options: [.resetTracking, .removeExistingAnchors])
+        overlay.setPoses([], coverage: true)
         isRecording = true
         phase = .scanning
     }
@@ -196,6 +201,7 @@ final class MeshScanner: NSObject, ObservableObject, ARSessionDelegate {
                 if saved {
                     self.keyframes.append(record)
                     self.keyframeCount = self.keyframes.count
+                    self.overlay.setPoses(self.keyframes.map(CamPose.init), coverage: true)
                 }
                 self.busy = false
             }
@@ -264,13 +270,13 @@ final class MeshScanner: NSObject, ObservableObject, ARSessionDelegate {
 struct ARViewContainer: UIViewRepresentable {
     let scanner: MeshScanner
 
-    func makeUIView(context: Context) -> ARView {
-        let view = ARView(frame: .zero, cameraMode: .ar, automaticallyConfigureSession: false)
+    func makeUIView(context: Context) -> ARSCNView {
+        let view = ARSCNView(frame: .zero)
         scanner.attach(view)
         return view
     }
 
-    func updateUIView(_ uiView: ARView, context: Context) {}
+    func updateUIView(_ uiView: ARSCNView, context: Context) {}
 }
 
 // MARK: - Schermata di scansione mesh
@@ -342,7 +348,7 @@ struct MeshScanView: View {
     private var panel: some View {
         switch scanner.phase {
         case .ready:
-            Text("Muoviti lentamente a 1–2 m dalle superfici. La mesh si disegna sullo schermo; l'app salva in automatico le foto per la texture.")
+            Text("Muoviti lentamente a 1–2 m dalle superfici. La griglia bianca è la mesh; durante la scansione le zone in fucsia non sono ancora riprese dalle foto: passaci sopra finché diventano bianche.")
                 .font(.caption)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
@@ -371,6 +377,13 @@ struct MeshScanView: View {
                 .buttonStyle(.borderedProminent)
             }
             .controlSize(.large)
+            HStack(spacing: 6) {
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(Color(LiveMeshOverlay.fillColor))
+                    .frame(width: 14, height: 14)
+                Text("Zone ancora da riprendere: passaci sopra lentamente finché diventano bianche")
+                    .font(.caption)
+            }
         case .processing:
             ProgressView(value: scanner.progress) {
                 Text(scanner.statusText)
