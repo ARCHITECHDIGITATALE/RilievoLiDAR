@@ -76,6 +76,46 @@ enum ImageUtils {
         return CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary)
     }
 
+    /// Nitidezza: varianza del laplaciano sulla luminanza (più alto = più nitida).
+    static func sharpness(_ px: RGBAPixels) -> Float {
+        let w = px.width
+        let h = px.height
+        guard w > 4, h > 4 else { return 0 }
+        func lum(_ x: Int, _ y: Int) -> Float {
+            let o = (y * w + x) * 4
+            return 0.299 * Float(px.data[o]) + 0.587 * Float(px.data[o + 1]) + 0.114 * Float(px.data[o + 2])
+        }
+        var sum: Float = 0
+        var sum2: Float = 0
+        var n: Float = 0
+        var y = 1
+        while y < h - 1 {
+            var x = 1
+            while x < w - 1 {
+                let l = 4 * lum(x, y) - lum(x - 1, y) - lum(x + 1, y) - lum(x, y - 1) - lum(x, y + 1)
+                sum += l
+                sum2 += l * l
+                n += 1
+                x += 1
+            }
+            y += 1
+        }
+        let mean = sum / n
+        return sum2 / n - mean * mean
+    }
+
+    /// Moltiplica i canali RGB per un guadagno (bilanciamento dell'esposizione tra le foto).
+    static func applyGain(_ image: CGImage, _ g: SIMD3<Float>) -> CGImage {
+        if abs(g.x - 1) < 0.01 && abs(g.y - 1) < 0.01 && abs(g.z - 1) < 0.01 { return image }
+        let ci = CIImage(cgImage: image).applyingFilter("CIColorMatrix", [
+            "inputRVector": CIVector(x: CGFloat(g.x), y: 0, z: 0, w: 0),
+            "inputGVector": CIVector(x: 0, y: CGFloat(g.y), z: 0, w: 0),
+            "inputBVector": CIVector(x: 0, y: 0, z: CGFloat(g.z), w: 0),
+            "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1)
+        ])
+        return ciContext.createCGImage(ci, from: ci.extent) ?? image
+    }
+
     static func rgbaPixels(_ image: CGImage) -> RGBAPixels? {
         let w = image.width
         let h = image.height

@@ -48,7 +48,7 @@ enum MeshExporter {
         try FileManager.default.createDirectory(at: exportDir, withIntermediateDirectories: true)
 
         progress(0.01, "Pulizia della mesh…")
-        let clean = MeshCleanup.clean(mesh)
+        let clean = MeshCleanup.refine(MeshCleanup.clean(mesh))
         let V = clean.vertices
         let I = clean.indices
         let vCount = V.count
@@ -71,6 +71,26 @@ enum MeshExporter {
                             width: Float(kf.width), height: Float(kf.height),
                             depth: depth, dw: kf.depthWidth, dh: kf.depthHeight))
         }
+
+        // Nitidezza di ogni foto (le foto mosse vengono usate solo se non c'è di meglio)
+        // e miniature per il bilanciamento dei colori.
+        progress(0.03, "Analisi delle foto…")
+        var rawSharp = [Float](repeating: 0, count: cams.count)
+        var small = [RGBAPixels?](repeating: nil, count: cams.count)
+        for k in 0..<cams.count {
+            autoreleasepool {
+                let url = exportDir.appendingPathComponent(cams[k].imageFile)
+                if let img = ImageUtils.thumbnail(at: url, maxPixel: 480), let px = ImageUtils.rgbaPixels(img) {
+                    rawSharp[k] = ImageUtils.sharpness(px)
+                }
+                if let img = ImageUtils.thumbnail(at: url, maxPixel: 200) {
+                    small[k] = ImageUtils.rgbaPixels(img)
+                }
+            }
+        }
+        let sortedSharp = rawSharp.filter { $0 > 0 }.sorted()
+        let medianSharp = sortedSharp.isEmpty ? 1 : max(sortedSharp[sortedSharp.count / 2], 1e-6)
+        let sharp: [Float] = rawSharp.map { r in r > 0 ? min(1.2, max(0.3, (r / medianSharp).squareRoot())) : 0.6 }
 
         // 2. Foto candidate per ogni triangolo (le migliori K)
         let K = 4
@@ -111,7 +131,7 @@ enum MeshExporter {
                 let uy = min(pm.y, cam.height - pm.y) / (cam.height * 0.5)
                 let border = 0.6 + 0.4 * min(1, min(ux, uy) * 3)
                 _ = pa; _ = pb; _ = pc
-                let score = facing * facing / (dist * dist) * border
+                let score = facing * facing / (dist * dist) * border * sharp[k]
                 // Inserimento ordinato tra le K migliori
                 var slot = -1
                 for j in 0..<K where score > cs[f * K + j] {
@@ -145,7 +165,7 @@ enum MeshExporter {
         var faceCam = [Int32](repeating: -1, count: fCount)
         for f in 0..<fCount { faceCam[f] = candCam[f * K] }
         let neighbors = MeshCleanup.faceNeighbors(I)
-        for _ in 0..<4 {
+        for _ in 0..<10 {
             var next = faceCam
             for f in 0..<fCount where candCam[f * K] >= 0 {
                 let best = candScore[f * K]
@@ -159,7 +179,7 @@ enum MeshExporter {
                         let g = neighbors[f * 3 + e]
                         if g >= 0 && faceCam[Int(g)] == cam { same += 1 }
                     }
-                    let value = candScore[f * K + j] / best + 0.35 * same
+                    let value = candScore[f * K + j] / best + 0.9 * same
                     if value > chosenValue {
                         chosenValue = value
                         chosen = cam
@@ -181,6 +201,60 @@ enum MeshExporter {
                 }
             }
         }
+
+        // Bilanciamento dell'esposizione: ogni foto viene corretta per avvicinarsi alla media
+        // delle altre foto che riprendono gli stessi punti (niente chiazze di tono diverso).
+        progress(0.47, "Bilanciamento dei colori tra le foto…")
+        var gains = [SIMD3<Float>](repeating: SIMD3<Float>(1, 1, 1), count: cams.count)
+        if cams.count > 1 {
+            var ks = [Int](repeating: 0, count: K)
+            var cols = [SIMD3<Float>](repeating: SIMD3<Float>(0, 0, 0), count: K)
+            for _ in 0..<3 {
+                var sumRef = [SIMD3<Float>](repeating: SIMD3<Float>(0, 0, 0), count: cams.count)
+                var sumOwn = [SIMD3<Float>](repeating: SIMD3<Float>(0, 0, 0), count: cams.count)
+                var f = 0
+                while f < fCount {
+                    defer { f += 2 }
+                    let centroid = (V[Int(I[f * 3])] + V[Int(I[f * 3 + 1])] + V[Int(I[f * 3 + 2])]) / 3
+                    var m = 0
+                    for j in 0..<K {
+                        let k = Int(candCam[f * K + j])
+                        if k < 0 { break }
+                        guard let px = small[k], let q = cams[k].project(centroid) else { continue }
+                        let x = min(px.width - 1, max(0, Int(q.x * Float(px.width) / cams[k].width)))
+                        let y = min(px.height - 1, max(0, Int(q.y * Float(px.height) / cams[k].height)))
+                        let o = (y * px.width + x) * 4
+                        let c = SIMD3<Float>(Float(px.data[o]), Float(px.data[o + 1]), Float(px.data[o + 2])) / 255
+                        let lum = (c.x + c.y + c.z) / 3
+                        if lum < 0.04 || lum > 0.96 { continue }
+                        ks[m] = k
+                        cols[m] = c
+                        m += 1
+                    }
+                    if m < 2 { continue }
+                    var ref = SIMD3<Float>(0, 0, 0)
+                    for i in 0..<m { ref += cols[i] * gains[ks[i]] }
+                    ref /= Float(m)
+                    for i in 0..<m {
+                        sumRef[ks[i]] += ref
+                        sumOwn[ks[i]] += cols[i]
+                    }
+                }
+                var mean = SIMD3<Float>(0, 0, 0)
+                var counted: Float = 0
+                for k in 0..<cams.count where sumOwn[k].x > 1 && sumOwn[k].y > 1 && sumOwn[k].z > 1 {
+                    let g = sumRef[k] / sumOwn[k]
+                    gains[k] = simd_clamp(g, SIMD3<Float>(repeating: 0.6), SIMD3<Float>(repeating: 1.6))
+                    mean += gains[k]
+                    counted += 1
+                }
+                if counted > 0 {
+                    mean /= counted
+                    for k in 0..<cams.count { gains[k] /= mean }
+                }
+            }
+        }
+        small = []
 
         var groups = [[Int]](repeating: [], count: cams.count)
         var untextured: [Int] = []
@@ -209,7 +283,8 @@ enum MeshExporter {
                     let x = min(px.width - 1, max(0, Int(uv.x * sx)))
                     let y = min(px.height - 1, max(0, Int(uv.y * sy)))
                     let o = (y * px.width + x) * 4
-                    let col = SIMD3<Float>(Float(px.data[o]), Float(px.data[o + 1]), Float(px.data[o + 2])) / 255
+                    let raw = SIMD3<Float>(Float(px.data[o]), Float(px.data[o + 1]), Float(px.data[o + 2])) / 255
+                    let col = simd_min(raw * gains[k], SIMD3<Float>(repeating: 1))
                     let vi = Int(I[f * 3 + j])
                     colorSum[vi] += col
                     colorCount[vi] += 1
@@ -224,7 +299,7 @@ enum MeshExporter {
         // 5. Atlante delle texture (ritagli delle foto impacchettati in poche immagini)
         progress(0.66, "Creazione delle texture…")
         let atlas = try TextureAtlas.build(faceCam: faceCam, faceUV: faceUV, indices: I, cams: cams,
-                                           exportDir: exportDir) { p in
+                                           gains: gains, exportDir: exportDir) { p in
             progress(0.66 + 0.16 * p, "Creazione delle texture…")
         }
 

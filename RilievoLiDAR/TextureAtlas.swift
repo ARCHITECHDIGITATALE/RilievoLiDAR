@@ -3,6 +3,7 @@ import UIKit
 import SceneKit
 import ImageIO
 import UniformTypeIdentifiers
+import CoreImage
 import simd
 
 // MARK: - Pulizia della mesh
@@ -156,7 +157,7 @@ enum TextureAtlas {
 
     /// Ritaglia dalle foto solo le zone usate e le impacchetta in poche immagini grandi.
     static func build(faceCam: [Int32], faceUV: [SIMD2<Float>], indices: [UInt32],
-                      cams: [MeshExporter.Cam], exportDir: URL,
+                      cams: [MeshExporter.Cam], gains: [SIMD3<Float>], exportDir: URL,
                       progress: (Double) -> Void) throws -> Result {
         let fCount = faceCam.count
         var groups = [[Int]](repeating: [], count: cams.count)
@@ -304,7 +305,8 @@ enum TextureAtlas {
                     let cam = cams[k]
                     let url = exportDir.appendingPathComponent(cam.imageFile)
                     let maxPixel = Int((CGFloat(max(cam.width, cam.height)) * s).rounded(.up))
-                    guard let img = ImageUtils.thumbnail(at: url, maxPixel: maxPixel) else { return }
+                    guard let original = ImageUtils.thumbnail(at: url, maxPixel: maxPixel) else { return }
+                    let img = ImageUtils.applyGain(original, k < gains.count ? gains[k] : SIMD3<Float>(1, 1, 1))
                     let sx = CGFloat(img.width) / CGFloat(cam.width)
                     let sy = CGFloat(img.height) / CGFloat(cam.height)
                     for c in onPage where c.cam == k {

@@ -249,7 +249,7 @@ final class MeshViewerModel: ObservableObject {
     }
     @Published var annotations = SavedAnnotations.empty
     @Published var currentPoints: [SIMD3<Float>] = []
-    @Published var showPath = true {
+    @Published var showPath = false {
         didSet { pathRoot.isHidden = !showPath }
     }
     @Published var showGrid = false {
@@ -390,6 +390,7 @@ final class MeshViewerModel: ObservableObject {
         root.addChildNode(topCamera)
         root.addChildNode(tourCamera)
         buildPath()
+        pathRoot.isHidden = !showPath
         buildGrid()
         gridRoot.isHidden = true
         annotations = MeshViewerModel.loadAnnotations(meshFolder)
