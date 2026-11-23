@@ -109,7 +109,10 @@ final class TSDFVolume {
     func extractMesh(minWeight: Float, progress: (Double) -> Void) -> MeshData {
         var cubeVertex = [SIMD3<Int32>: UInt32]()
         var vertices: [SIMD3<Float>] = []
-        let corner: [SIMD3<Int32>] = (0..<8).map { SIMD3<Int32>(Int32($0 & 1), Int32(($0 >> 1) & 1), Int32(($0 >> 2) & 1)) }
+        let corner: [SIMD3<Int32>] = [
+            SIMD3<Int32>(0, 0, 0), SIMD3<Int32>(1, 0, 0), SIMD3<Int32>(0, 1, 0), SIMD3<Int32>(1, 1, 0),
+            SIMD3<Int32>(0, 0, 1), SIMD3<Int32>(1, 0, 1), SIMD3<Int32>(0, 1, 1), SIMD3<Int32>(1, 1, 1)
+        ]
         var edges: [(Int, Int)] = []
         for i in 0..<8 {
             for bit in [1, 2, 4] where i & bit == 0 { edges.append((i, i | bit)) }
