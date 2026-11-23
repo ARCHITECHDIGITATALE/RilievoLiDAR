@@ -66,6 +66,11 @@ final class MeshScanner: NSObject, ObservableObject, ARSessionDelegate {
     /// Avviso a schermo: rallenta per avere foto nitide.
     @Published var movingTooFast = false
     private var keyframes: [KeyframeRecord] = []
+    /// Mappe di profondità per la ricostruzione finale (circa 5 al secondo).
+    private var depthFrames: [DepthFrameRecord] = []
+    private var lastDepthTime: TimeInterval = 0
+    private var depthBusy = false
+    let maxDepthFrames = 1800
     private var meshFolder: URL?
     private let ioQueue = DispatchQueue(label: "rilievo.keyframes")
     private let ciContext = CIContext()
@@ -90,6 +95,9 @@ final class MeshScanner: NSObject, ObservableObject, ARSessionDelegate {
         if ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) {
             config.frameSemantics.insert(.sceneDepth)
         }
+        if ARWorldTrackingConfiguration.supportsFrameSemantics(.smoothedSceneDepth) {
+            config.frameSemantics.insert(.smoothedSceneDepth)
+        }
         return config
     }
 
@@ -103,8 +111,13 @@ final class MeshScanner: NSObject, ObservableObject, ARSessionDelegate {
                                 withIntermediateDirectories: true)
         try? fm.createDirectory(at: folder.appendingPathComponent("depth", isDirectory: true),
                                 withIntermediateDirectories: true)
+        try? fm.createDirectory(at: folder.appendingPathComponent("fusione", isDirectory: true),
+                                withIntermediateDirectories: true)
         meshFolder = folder
         keyframes = []
+        depthFrames = []
+        lastDepthTime = 0
+        depthBusy = false
         keyframeCount = 0
         lastTransform = nil
         lastTime = 0
@@ -139,8 +152,14 @@ final class MeshScanner: NSObject, ObservableObject, ARSessionDelegate {
         prevFrameTime = frame.timestamp
         if isRecording && tooFast != movingTooFast { movingTooFast = tooFast }
 
+        var trackingOK = false
+        if case .normal = frame.camera.trackingState { trackingOK = true }
+        if isRecording, !paused, !tooFast, trackingOK {
+            recordDepth(frame)
+        }
+
         guard isRecording, !paused, !busy, !tooFast, let folder = meshFolder, keyframes.count < maxKeyframes else { return }
-        guard case .normal = frame.camera.trackingState else { return }
+        guard trackingOK else { return }
 
         if let last = lastTransform {
             if frame.timestamp - lastTime < 0.5 { return }
@@ -208,6 +227,53 @@ final class MeshScanner: NSObject, ObservableObject, ARSessionDelegate {
         }
     }
 
+    /// Salva la profondità (filtrata da ARKit) e la sua affidabilità per la fusione finale.
+    private func recordDepth(_ frame: ARFrame) {
+        guard !depthBusy, let folder = meshFolder, depthFrames.count < maxDepthFrames,
+              frame.timestamp - lastDepthTime >= 0.2,
+              let sceneDepth = frame.smoothedSceneDepth ?? frame.sceneDepth else { return }
+        lastDepthTime = frame.timestamp
+        depthBusy = true
+        let depth = MeshScanner.copyPixels(sceneDepth.depthMap, bytesPerPixel: 4)
+        var payload = depth.data
+        if let conf = sceneDepth.confidenceMap {
+            payload.append(MeshScanner.copyPixels(conf, bytesPerPixel: 1).data)
+        }
+        let imageW = Float(CVPixelBufferGetWidth(frame.capturedImage))
+        let imageH = Float(CVPixelBufferGetHeight(frame.capturedImage))
+        let sx = Float(depth.width) / imageW
+        let sy = Float(depth.height) / imageH
+        let k = frame.camera.intrinsics
+        let record = DepthFrameRecord(file: String(format: "fusione/d_%05d.bin", depthFrames.count),
+                                      width: depth.width, height: depth.height,
+                                      intrinsics: [k[0][0] * sx, k[1][1] * sy, k[2][0] * sx, k[2][1] * sy],
+                                      transform: frame.camera.transform.floatArray)
+        let data = payload
+        ioQueue.async {
+            let ok = (try? data.write(to: folder.appendingPathComponent(record.file))) != nil
+            DispatchQueue.main.async {
+                if ok { self.depthFrames.append(record) }
+                self.depthBusy = false
+            }
+        }
+    }
+
+    static func copyPixels(_ buffer: CVPixelBuffer, bytesPerPixel: Int) -> (data: Data, width: Int, height: Int) {
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        let w = CVPixelBufferGetWidth(buffer)
+        let h = CVPixelBufferGetHeight(buffer)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+        var data = Data(capacity: w * h * bytesPerPixel)
+        if let base = CVPixelBufferGetBaseAddress(buffer) {
+            for y in 0..<h {
+                let row = base.advanced(by: y * bytesPerRow).assumingMemoryBound(to: UInt8.self)
+                data.append(row, count: w * bytesPerPixel)
+            }
+        }
+        return (data, w, h)
+    }
+
     static func copyDepth(_ buffer: CVPixelBuffer) -> (data: Data, width: Int, height: Int) {
         CVPixelBufferLockBaseAddress(buffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
@@ -240,11 +306,28 @@ final class MeshScanner: NSObject, ObservableObject, ARSessionDelegate {
         ioQueue.async {
             DispatchQueue.main.async {
                 let frames = self.keyframes
+                let depthFrames = self.depthFrames
                 DispatchQueue.global(qos: .userInitiated).async {
                     do {
-                        let info = try MeshExporter.export(mesh: mesh, keyframes: frames, folder: folder) { p, text in
+                        // 1. Ricostruzione della mesh dalle misure di profondità (come fa Polycam a fine scansione).
+                        //    Se non riesce si usa la mesh in tempo reale di ARKit.
+                        var source = mesh
+                        let fusionShare = depthFrames.count >= 10 ? 0.45 : 0
+                        if fusionShare > 0,
+                           let fused = DepthFusion.fuse(meshFolder: folder, frames: depthFrames, progress: { p, text in
+                               DispatchQueue.main.async {
+                                   self.progress = p * fusionShare
+                                   self.statusText = text
+                               }
+                           }) {
+                            source = fused
+                        }
+                        try? FileManager.default.removeItem(at: folder.appendingPathComponent("fusione"))
+
+                        // 2. Texture dalle foto
+                        let info = try MeshExporter.export(mesh: source, keyframes: frames, folder: folder) { p, text in
                             DispatchQueue.main.async {
-                                self.progress = p
+                                self.progress = fusionShare + p * (1 - fusionShare)
                                 self.statusText = text
                             }
                         }

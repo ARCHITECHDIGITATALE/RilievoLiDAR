@@ -76,10 +76,17 @@ enum MeshExporter {
         let K = 4
         var candCam = [Int32](repeating: -1, count: fCount * K)
         var candScore = [Float](repeating: 0, count: fCount * K)
-        for f in 0..<fCount {
-            if f % 4000 == 0 {
-                progress(0.05 + 0.4 * Double(f) / Double(fCount), "Associazione delle foto alla mesh…")
-            }
+        let chunks = 64
+        let progressLock = NSLock()
+        var chunksDone = 0
+        candCam.withUnsafeMutableBufferPointer { ccBuf in
+        candScore.withUnsafeMutableBufferPointer { csBuf in
+        let cc = ccBuf.baseAddress!
+        let cs = csBuf.baseAddress!
+        DispatchQueue.concurrentPerform(iterations: chunks) { chunk in
+        let lo = fCount * chunk / chunks
+        let hi = fCount * (chunk + 1) / chunks
+        for f in lo..<hi {
             if cams.isEmpty { break }
             let a = V[Int(I[f * 3])]
             let b = V[Int(I[f * 3 + 1])]
@@ -107,20 +114,30 @@ enum MeshExporter {
                 let score = facing * facing / (dist * dist) * border
                 // Inserimento ordinato tra le K migliori
                 var slot = -1
-                for j in 0..<K where score > candScore[f * K + j] {
+                for j in 0..<K where score > cs[f * K + j] {
                     slot = j
                     break
                 }
                 if slot < 0 { continue }
                 var j = K - 1
                 while j > slot {
-                    candCam[f * K + j] = candCam[f * K + j - 1]
-                    candScore[f * K + j] = candScore[f * K + j - 1]
+                    cc[f * K + j] = cc[f * K + j - 1]
+                    cs[f * K + j] = cs[f * K + j - 1]
                     j -= 1
                 }
-                candCam[f * K + slot] = Int32(k)
-                candScore[f * K + slot] = score
+                cc[f * K + slot] = Int32(k)
+                cs[f * K + slot] = score
             }
+        }
+        progressLock.lock()
+        chunksDone += 1
+        let done = chunksDone
+        progressLock.unlock()
+        if done % 4 == 0 {
+            progress(0.05 + 0.4 * Double(done) / Double(chunks), "Associazione delle foto alla mesh…")
+        }
+        }
+        }
         }
 
         // 3. Scelta coerente tra triangoli vicini (meno cuciture tra una foto e l'altra)
