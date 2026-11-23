@@ -107,7 +107,7 @@ enum ImageUtils {
     /// Moltiplica i canali RGB per un guadagno (bilanciamento dell'esposizione tra le foto).
     static func applyGain(_ image: CGImage, _ g: SIMD3<Float>) -> CGImage {
         if abs(g.x - 1) < 0.01 && abs(g.y - 1) < 0.01 && abs(g.z - 1) < 0.01 { return image }
-        let ci = CIImage(cgImage: image).applyingFilter("CIColorMatrix", [
+        let ci = CIImage(cgImage: image).applyingFilter("CIColorMatrix", parameters: [
             "inputRVector": CIVector(x: CGFloat(g.x), y: 0, z: 0, w: 0),
             "inputGVector": CIVector(x: 0, y: CGFloat(g.y), z: 0, w: 0),
             "inputBVector": CIVector(x: 0, y: 0, z: CGFloat(g.z), w: 0),
