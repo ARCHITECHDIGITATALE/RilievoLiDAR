@@ -87,6 +87,10 @@ final class MeshScanner: NSObject, ObservableObject, ARSessionDelegate {
         view.session.run(MeshScanner.makeConfiguration())
     }
 
+    /// Ricostruzione della mesh dalle mappe di profondità (sperimentale, disattivata di default):
+    /// sui vetri e con piccoli spostamenti del tracciamento può sdoppiare le superfici.
+    static var depthFusionEnabled: Bool { UserDefaults.standard.bool(forKey: "depthFusion") }
+
     static func makeConfiguration() -> ARWorldTrackingConfiguration {
         let config = ARWorldTrackingConfiguration()
         if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
@@ -155,7 +159,7 @@ final class MeshScanner: NSObject, ObservableObject, ARSessionDelegate {
         var trackingOK = false
         if case .normal = frame.camera.trackingState { trackingOK = true }
         if isRecording, !paused, !tooFast, trackingOK {
-            recordDepth(frame)
+            if MeshScanner.depthFusionEnabled { recordDepth(frame) }
         }
 
         guard isRecording, !paused, !busy, !tooFast, let folder = meshFolder, keyframes.count < maxKeyframes else { return }
@@ -314,7 +318,7 @@ final class MeshScanner: NSObject, ObservableObject, ARSessionDelegate {
                         //    Se non riesce si usa la mesh in tempo reale di ARKit.
                         var source = mesh
                         var fusedCount = 0
-                        let fusionShare = depthFrames.count >= 10 ? 0.45 : 0
+                        let fusionShare = MeshScanner.depthFusionEnabled && depthFrames.count >= 10 ? 0.45 : 0
                         if fusionShare > 0,
                            let fused = DepthFusion.fuse(meshFolder: folder, frames: depthFrames, progress: { p, text in
                                DispatchQueue.main.async {
@@ -328,7 +332,8 @@ final class MeshScanner: NSObject, ObservableObject, ARSessionDelegate {
                         try? FileManager.default.removeItem(at: folder.appendingPathComponent("fusione"))
 
                         // 2. Texture dalle foto
-                        var info = try MeshExporter.export(mesh: source, keyframes: frames, folder: folder) { p, text in
+                        var info = try MeshExporter.export(mesh: source, keyframes: frames, folder: folder,
+                                                           fused: fusedCount > 0) { p, text in
                             DispatchQueue.main.async {
                                 self.progress = fusionShare + p * (1 - fusionShare)
                                 self.statusText = text
@@ -378,6 +383,7 @@ struct MeshScanView: View {
     @StateObject private var scanner = MeshScanner()
 
     @State private var showNote = false
+    @AppStorage("depthFusion") private var depthFusion = false
     @State private var noteText = ""
     @State private var pendingPhotoID: UUID?
 
@@ -440,6 +446,15 @@ struct MeshScanView: View {
     private var panel: some View {
         switch scanner.phase {
         case .ready:
+            Toggle(isOn: $depthFusion) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Ricostruzione dalla profondità (sperimentale)")
+                    Text("Superfici più lisce, ma su vetri e grate può sdoppiare o bucare. Di solito meglio spenta.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: 520)
             Text("Muoviti lentamente a 1–2 m dalle superfici. La griglia bianca è la mesh; durante la scansione le zone in fucsia non sono ancora riprese dalle foto: passaci sopra finché diventano bianche.")
                 .font(.caption)
                 .multilineTextAlignment(.center)

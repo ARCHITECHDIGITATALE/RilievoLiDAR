@@ -42,13 +42,16 @@ enum MeshExporter {
         }
     }
 
-    static func export(mesh: MeshData, keyframes: [KeyframeRecord], folder: URL,
+    static func export(mesh: MeshData, keyframes: [KeyframeRecord], folder: URL, fused: Bool = false,
                        progress: (Double, String) -> Void) throws -> MeshInfo {
         let exportDir = folder.appendingPathComponent("export", isDirectory: true)
         try FileManager.default.createDirectory(at: exportDir, withIntermediateDirectories: true)
 
         progress(0.01, "Pulizia della mesh…")
-        let clean = MeshCleanup.refine(MeshCleanup.clean(mesh))
+        // La mesh di ARKit è già levigata: rifinitura leggera e solo buchi piccoli.
+        let clean = MeshCleanup.refine(MeshCleanup.clean(mesh),
+                                       smoothIterations: fused ? 8 : 2,
+                                       maxHoleEdges: fused ? 48 : 20)
         let V = clean.vertices
         let I = clean.indices
         let vCount = V.count
