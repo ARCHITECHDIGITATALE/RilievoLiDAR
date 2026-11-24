@@ -159,7 +159,7 @@ enum TextureAtlas {
     /// Ritaglia dalle foto solo le zone usate e le impacchetta in poche immagini grandi.
     static func build(faceCam: [Int32], faceUV: [SIMD2<Float>], indices: [UInt32],
                       cams: [MeshExporter.Cam], gains: [SIMD3<Float>], vertices: [SIMD3<Float>],
-                      candCam: [Int32], K: Int, small: [RGBAPixels?],
+                      candCam: [Int32], K: Int, small: [RGBAPixels?], fillColor: SIMD3<Float>,
                       exportDir: URL,
                       progress: (Double) -> Void) throws -> Result {
         let fCount = faceCam.count
@@ -298,7 +298,8 @@ enum TextureAtlas {
                                       bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else {
                 throw ExportError("Memoria insufficiente per la texture.")
             }
-            ctx.setFillColor(UIColor(white: 0.7, alpha: 1).cgColor)
+            ctx.setFillColor(UIColor(red: CGFloat(fillColor.x), green: CGFloat(fillColor.y),
+                                     blue: CGFloat(fillColor.z), alpha: 1).cgColor)
             ctx.fill(CGRect(x: 0, y: 0, width: P, height: P))
             ctx.interpolationQuality = .high
             let onPage = charts.filter { $0.page == p }

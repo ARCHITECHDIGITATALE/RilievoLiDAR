@@ -54,7 +54,9 @@ enum MeshExporter {
                                          smoothIterations: fused ? 8 : 2,
                                          maxHolePerimeter: fused ? 3 : 7,
                                          fringePasses: fused ? 2 : 0)
-        let clean = MeshCleanup.subdivideLong(refined, maxEdge: 0.06, passes: 3)
+        // Pavimento sotto i mobili (dove il LiDAR non vede)
+        let (withFloor, floorY) = MeshCleanup.fillFloor(refined)
+        let clean = MeshCleanup.subdivideLong(withFloor, maxEdge: 0.06, passes: 3)
         let V = clean.vertices
         let I = clean.indices
         let vCount = V.count
@@ -305,10 +307,22 @@ enum MeshExporter {
 
         // 5. Atlante delle texture (ritagli delle foto impacchettati in poche immagini)
         progress(0.66, "Creazione delle texture…")
+        // Colore per le zone che nessuna foto vede (pavimento sotto i mobili): media del pavimento visto
+        var fillColor = SIMD3<Float>(0.7, 0.7, 0.7)
+        if let fy = floorY {
+            var sum = SIMD3<Float>(0, 0, 0)
+            var n: Float = 0
+            for i in 0..<vCount where colorCount[i] > 0 && abs(V[i].y - fy) < 0.03 {
+                sum += colors[i]
+                n += 1
+            }
+            if n > 50 { fillColor = sum / n }
+        }
+
         // Per la fusione tra foto si usa solo il tono molto sfumato (niente dettagli "fantasma")
         let toneImages: [RGBAPixels?] = small.map { $0.map { ImageUtils.boxBlur($0, radius: 3) } }
         let atlas = try TextureAtlas.build(faceCam: faceCam, faceUV: faceUV, indices: I, cams: cams,
-                                           gains: gains, vertices: V, candCam: candCam, K: K, small: toneImages,
+                                           gains: gains, vertices: V, candCam: candCam, K: K, small: toneImages, fillColor: fillColor,
                                            exportDir: exportDir) { p in
             progress(0.66 + 0.16 * p, "Creazione delle texture…")
         }
