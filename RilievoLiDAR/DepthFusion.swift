@@ -196,6 +196,46 @@ final class TSDFVolume {
 }
 
 enum DepthFusion {
+    /// Riempie i buchi della mesh ricostruita (vetri, specchi, zone viste poco) con i triangoli
+    /// della mesh in tempo reale di ARKit che cadono dove la ricostruzione non ha superficie.
+    static func fillGaps(fused: MeshData, arkit: MeshData, cell: Float = 0.04) -> MeshData {
+        guard !arkit.indices.isEmpty else { return fused }
+        func key(_ p: SIMD3<Float>) -> SIMD3<Int32> {
+            SIMD3<Int32>(Int32((p.x / cell).rounded(.down)), Int32((p.y / cell).rounded(.down)),
+                         Int32((p.z / cell).rounded(.down)))
+        }
+        var occupied = Set<SIMD3<Int32>>()
+        occupied.reserveCapacity(fused.vertices.count)
+        for v in fused.vertices { occupied.insert(key(v)) }
+        var out = fused
+        var remap = [Int32](repeating: -1, count: arkit.vertices.count)
+        var t = 0
+        while t + 2 < arkit.indices.count {
+            let ia = Int(arkit.indices[t]), ib = Int(arkit.indices[t + 1]), ic = Int(arkit.indices[t + 2])
+            t += 3
+            let centroid = (arkit.vertices[ia] + arkit.vertices[ib] + arkit.vertices[ic]) / 3
+            let k = key(centroid)
+            var covered = false
+            search: for dz in -1...1 {
+                for dy in -1...1 {
+                    for dx in -1...1 where occupied.contains(k &+ SIMD3<Int32>(Int32(dx), Int32(dy), Int32(dz))) {
+                        covered = true
+                        break search
+                    }
+                }
+            }
+            if covered { continue }
+            for i in [ia, ib, ic] {
+                if remap[i] < 0 {
+                    remap[i] = Int32(out.vertices.count)
+                    out.vertices.append(arkit.vertices[i])
+                }
+                out.indices.append(UInt32(remap[i]))
+            }
+        }
+        return out
+    }
+
     /// Ricostruisce la mesh fondendo tutte le mappe di profondità registrate.
     static func fuse(meshFolder: URL, frames: [DepthFrameRecord], voxel: Float = 0.02,
                      progress: (Double, String) -> Void) -> MeshData? {

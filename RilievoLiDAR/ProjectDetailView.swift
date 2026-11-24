@@ -155,6 +155,10 @@ struct ProjectDetailView: View {
             if let mesh = project.mesh {
                 LabeledContent("Fotogrammi", value: "\(mesh.keyframes)")
                 LabeledContent("Triangoli", value: "\(mesh.faces)")
+                LabeledContent("Origine della mesh", value: mesh.sourceText)
+                if let secs = mesh.processingSeconds {
+                    LabeledContent("Elaborazione", value: "\(Int(secs.rounded())) s")
+                }
                 LabeledContent("Coperti da foto",
                                value: mesh.faces > 0 ? "\(Int(Double(mesh.texturedFaces) / Double(mesh.faces) * 100))%" : "–")
                 Button {

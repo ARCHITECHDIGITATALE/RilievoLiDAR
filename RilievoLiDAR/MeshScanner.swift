@@ -307,11 +307,13 @@ final class MeshScanner: NSObject, ObservableObject, ARSessionDelegate {
             DispatchQueue.main.async {
                 let frames = self.keyframes
                 let depthFrames = self.depthFrames
+                let startTime = Date()
                 DispatchQueue.global(qos: .userInitiated).async {
                     do {
                         // 1. Ricostruzione della mesh dalle misure di profondità (come fa Polycam a fine scansione).
                         //    Se non riesce si usa la mesh in tempo reale di ARKit.
                         var source = mesh
+                        var fusedCount = 0
                         let fusionShare = depthFrames.count >= 10 ? 0.45 : 0
                         if fusionShare > 0,
                            let fused = DepthFusion.fuse(meshFolder: folder, frames: depthFrames, progress: { p, text in
@@ -320,18 +322,23 @@ final class MeshScanner: NSObject, ObservableObject, ARSessionDelegate {
                                    self.statusText = text
                                }
                            }) {
-                            source = fused
+                            source = DepthFusion.fillGaps(fused: fused, arkit: mesh)
+                            fusedCount = depthFrames.count
                         }
                         try? FileManager.default.removeItem(at: folder.appendingPathComponent("fusione"))
 
                         // 2. Texture dalle foto
-                        let info = try MeshExporter.export(mesh: source, keyframes: frames, folder: folder) { p, text in
+                        var info = try MeshExporter.export(mesh: source, keyframes: frames, folder: folder) { p, text in
                             DispatchQueue.main.async {
                                 self.progress = fusionShare + p * (1 - fusionShare)
                                 self.statusText = text
                             }
                         }
+                        info.depthFrames = fusedCount
+                        info.processingSeconds = Date().timeIntervalSince(startTime)
+                        let finalInfo = info
                         DispatchQueue.main.async {
+                            let info = finalInfo
                             store.update(projectID) { $0.mesh = info }
                             self.resultInfo = info
                             self.progress = 1
@@ -478,6 +485,9 @@ struct MeshScanView: View {
         case .done:
             if let info = scanner.resultInfo {
                 Text("Mesh pronta: \(info.faces) triangoli, \(info.keyframes) foto.")
+                Text("\(info.sourceText) · elaborazione \(Int((info.processingSeconds ?? 0).rounded())) s")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Button("Chiudi") { dismiss() }
                 .buttonStyle(.borderedProminent)

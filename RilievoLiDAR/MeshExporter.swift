@@ -254,6 +254,10 @@ enum MeshExporter {
                 }
             }
         }
+        // Livellamento delle cuciture tra una foto e l'altra
+        progress(0.49, "Sfumatura delle cuciture tra le foto…")
+        let cornerOffset = SeamLeveling.solve(faceCam: faceCam, faceUV: faceUV, indices: I, vertexCount: vCount,
+                                              cams: cams, small: small, gains: gains)
         small = []
 
         var groups = [[Int]](repeating: [], count: cams.count)
@@ -299,7 +303,8 @@ enum MeshExporter {
         // 5. Atlante delle texture (ritagli delle foto impacchettati in poche immagini)
         progress(0.66, "Creazione delle texture…")
         let atlas = try TextureAtlas.build(faceCam: faceCam, faceUV: faceUV, indices: I, cams: cams,
-                                           gains: gains, exportDir: exportDir) { p in
+                                           gains: gains, cornerOffset: cornerOffset,
+                                           exportDir: exportDir) { p in
             progress(0.66 + 0.16 * p, "Creazione delle texture…")
         }
 

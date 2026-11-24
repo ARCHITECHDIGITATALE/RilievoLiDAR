@@ -157,7 +157,8 @@ enum TextureAtlas {
 
     /// Ritaglia dalle foto solo le zone usate e le impacchetta in poche immagini grandi.
     static func build(faceCam: [Int32], faceUV: [SIMD2<Float>], indices: [UInt32],
-                      cams: [MeshExporter.Cam], gains: [SIMD3<Float>], exportDir: URL,
+                      cams: [MeshExporter.Cam], gains: [SIMD3<Float>], cornerOffset: [SIMD3<Float>],
+                      exportDir: URL,
                       progress: (Double) -> Void) throws -> Result {
         let fCount = faceCam.count
         var groups = [[Int]](repeating: [], count: cams.count)
@@ -324,6 +325,10 @@ enum TextureAtlas {
                         ctx.draw(crop, in: CGRect(x: dx, y: P - dy - dh, width: dw, height: dh))
                     }
                 }
+            }
+            if let data = ctx.data, cornerOffset.count == fCount * 3 {
+                SeamLeveling.apply(to: data.assumingMemoryBound(to: UInt8.self), bytesPerRow: ctx.bytesPerRow,
+                                   size: pageSize, faces: onPage.flatMap { $0.faces }, uv: uv, offsets: cornerOffset)
             }
             guard let image = ctx.makeImage() else { throw ExportError("Texture non creata.") }
             let url = exportDir.appendingPathComponent("texture_\(p).jpg")

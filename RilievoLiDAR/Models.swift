@@ -27,6 +27,15 @@ struct MeshInfo: Codable, Hashable {
     var keyframes: Int
     var faces: Int
     var texturedFaces: Int
+    /// Mappe di profondità fuse nella ricostruzione (0 o nil = mesh di ARKit in tempo reale).
+    var depthFrames: Int?
+    /// Durata dell'elaborazione a fine scansione, in secondi.
+    var processingSeconds: Double?
+
+    var sourceText: String {
+        if let n = depthFrames, n > 0 { return "Ricostruita da \(n) mappe di profondità" }
+        return "Mesh in tempo reale di ARKit"
+    }
 }
 
 struct Project: Codable, Identifiable, Hashable {
