@@ -396,6 +396,8 @@ struct MeshScanView: View {
                     }
                     .disabled(scanner.phase == .processing)
                     Spacer()
+                    TorchButton()
+                        .padding(.trailing, 12)
                     if scanner.phase == .scanning {
                         if scanner.movingTooFast && !scanner.paused {
                             Label("Rallenta", systemImage: "tortoise.fill")

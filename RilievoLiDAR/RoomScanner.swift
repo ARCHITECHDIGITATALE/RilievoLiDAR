@@ -127,6 +127,8 @@ struct RoomScanView: View {
                     }
                     .disabled(scanner.phase == .processing)
                     Spacer()
+                    TorchButton()
+                        .padding(.trailing, 12)
                     Text("Stanze in questa sessione: \(scanner.roomsThisSession)")
                         .font(.subheadline)
                 }
