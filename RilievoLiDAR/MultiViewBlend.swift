@@ -18,7 +18,12 @@ enum MultiViewBlend {
             return SIMD3<Float>(Float(px.data[o]), Float(px.data[o + 1]), Float(px.data[o + 2]))
         }
         let a = at(x0, y0), b = at(x0 + 1, y0), c = at(x0, y0 + 1), d = at(x0 + 1, y0 + 1)
-        return ((a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty) / 255
+        let sx: Float = 1 - tx
+        let sy: Float = 1 - ty
+        let top: SIMD3<Float> = a * sx + b * tx
+        let bottom: SIMD3<Float> = c * sx + d * tx
+        let mixed: SIMD3<Float> = top * sy + bottom * ty
+        return mixed / 255
     }
 
     /// Colore di un punto 3D visto dalla foto k, con il suo peso (0 se non visibile).
