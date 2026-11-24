@@ -1,5 +1,6 @@
 import SwiftUI
 import ARKit
+import AVFoundation
 import SceneKit
 import CoreImage
 import Metal
@@ -129,11 +130,38 @@ final class MeshScanner: NSObject, ObservableObject, ARSessionDelegate {
         progress = 0
         session.run(MeshScanner.makeConfiguration(), options: [.resetTracking, .removeExistingAnchors])
         overlay.setPoses([], coverage: true)
+        // Dopo un attimo di regolazione automatica, esposizione e bilanciamento del bianco restano fissi:
+        // tutte le foto hanno lo stesso tono e le pareti non vengono a chiazze.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            guard let self, self.isRecording else { return }
+            MeshScanner.lockCamera(true)
+        }
         isRecording = true
         phase = .scanning
     }
 
+    /// Blocca (o sblocca) esposizione e bilanciamento del bianco della fotocamera usata da ARKit.
+    static func lockCamera(_ lock: Bool) {
+        guard let device = ARWorldTrackingConfiguration.configurableCaptureDeviceForPrimaryCamera else { return }
+        do {
+            try device.lockForConfiguration()
+            defer { device.unlockForConfiguration() }
+            if lock {
+                if device.isExposureModeSupported(.locked) { device.exposureMode = .locked }
+                if device.isWhiteBalanceModeSupported(.locked) { device.whiteBalanceMode = .locked }
+            } else {
+                if device.isExposureModeSupported(.continuousAutoExposure) { device.exposureMode = .continuousAutoExposure }
+                if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
+                    device.whiteBalanceMode = .continuousAutoWhiteBalance
+                }
+            }
+        } catch {
+            print("Blocco esposizione non riuscito: \(error)")
+        }
+    }
+
     func shutdown() {
+        MeshScanner.lockCamera(false)
         isRecording = false
         session?.pause()
     }
@@ -304,6 +332,7 @@ final class MeshScanner: NSObject, ObservableObject, ARSessionDelegate {
 
         let anchors = session.currentFrame?.anchors.compactMap { $0 as? ARMeshAnchor } ?? []
         let mesh = MeshData.from(anchors)
+        MeshScanner.lockCamera(false)
         session.pause()
 
         // Aspetta che l'ultimo fotogramma sia stato scritto su disco.

@@ -128,7 +128,7 @@ enum MeshExporter {
                 let dist = simd_length(toCam)
                 if dist > 5 || dist < 0.1 { continue }
                 let facing = abs(simd_dot(n, toCam / dist))
-                if facing < 0.3 { continue }
+                if facing < 0.1 { continue }
                 guard let pa = cam.project(a), let pb = cam.project(b), let pc = cam.project(c),
                       let pm = cam.project(centroid) else { continue }
                 if let d = cam.depthAt(u: pm.x, v: pm.y), pm.z - d > 0.08 { continue } // nascosto da altro
@@ -137,7 +137,9 @@ enum MeshExporter {
                 let uy = min(pm.y, cam.height - pm.y) / (cam.height * 0.5)
                 let border = 0.6 + 0.4 * min(1, min(ux, uy) * 3)
                 _ = pa; _ = pb; _ = pc
-                let score = facing * facing / (dist * dist) * border * sharp[k]
+                // Le viste molto di sbieco valgono poco, ma evitano i bordi senza colore (sedie, scrivania)
+                let grazing: Float = facing < 0.3 ? 0.15 : 1
+                let score = facing * facing / (dist * dist) * border * sharp[k] * grazing
                 // Inserimento ordinato tra le K migliori
                 var slot = -1
                 for j in 0..<K where score > cs[f * K + j] {
