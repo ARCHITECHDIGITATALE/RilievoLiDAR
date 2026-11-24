@@ -156,6 +156,9 @@ struct ProjectDetailView: View {
                 LabeledContent("Fotogrammi", value: "\(mesh.keyframes)")
                 LabeledContent("Triangoli", value: "\(mesh.faces)")
                 LabeledContent("Origine della mesh", value: mesh.sourceText)
+                if let ts = mesh.textureScale {
+                    LabeledContent("Risoluzione texture", value: "\(Int((ts * 100).rounded()))%")
+                }
                 if let secs = mesh.processingSeconds {
                     LabeledContent("Elaborazione", value: "\(Int(secs.rounded())) s")
                 }

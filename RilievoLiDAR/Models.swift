@@ -31,6 +31,8 @@ struct MeshInfo: Codable, Hashable {
     var depthFrames: Int?
     /// Durata dell'elaborazione a fine scansione, in secondi.
     var processingSeconds: Double?
+    /// Risoluzione delle texture rispetto alle foto (1 = piena risoluzione).
+    var textureScale: Double?
 
     var sourceText: String {
         if let n = depthFrames, n > 0 { return "Ricostruita da \(n) mappe di profondità" }

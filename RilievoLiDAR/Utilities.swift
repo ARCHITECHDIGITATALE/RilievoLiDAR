@@ -116,6 +116,45 @@ enum ImageUtils {
         return ciContext.createCGImage(ci, from: ci.extent) ?? image
     }
 
+    /// Sfocatura a scatola separabile (radius in pixel) su un'immagine RGBA.
+    static func boxBlur(_ px: RGBAPixels, radius r: Int) -> RGBAPixels {
+        let w = px.width, h = px.height
+        guard r > 0, w > 2 * r, h > 2 * r else { return px }
+        var tmp = [Float](repeating: 0, count: w * h * 3)
+        var out = [UInt8](repeating: 255, count: w * h * 4)
+        for y in 0..<h {
+            for x in 0..<w {
+                var s = SIMD3<Float>(0, 0, 0)
+                var n: Float = 0
+                for xx in max(0, x - r)...min(w - 1, x + r) {
+                    let o = (y * w + xx) * 4
+                    s += SIMD3<Float>(Float(px.data[o]), Float(px.data[o + 1]), Float(px.data[o + 2]))
+                    n += 1
+                }
+                let t = (y * w + x) * 3
+                tmp[t] = s.x / n
+                tmp[t + 1] = s.y / n
+                tmp[t + 2] = s.z / n
+            }
+        }
+        for y in 0..<h {
+            for x in 0..<w {
+                var s = SIMD3<Float>(0, 0, 0)
+                var n: Float = 0
+                for yy in max(0, y - r)...min(h - 1, y + r) {
+                    let t = (yy * w + x) * 3
+                    s += SIMD3<Float>(tmp[t], tmp[t + 1], tmp[t + 2])
+                    n += 1
+                }
+                let o = (y * w + x) * 4
+                out[o] = UInt8(min(255, s.x / n))
+                out[o + 1] = UInt8(min(255, s.y / n))
+                out[o + 2] = UInt8(min(255, s.z / n))
+            }
+        }
+        return RGBAPixels(data: out, width: w, height: h)
+    }
+
     static func rgbaPixels(_ image: CGImage) -> RGBAPixels? {
         let w = image.width
         let h = image.height

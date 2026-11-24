@@ -147,7 +147,17 @@ final class MeshScanner: NSObject, ObservableObject, ARSessionDelegate {
             try device.lockForConfiguration()
             defer { device.unlockForConfiguration() }
             if lock {
-                if device.isExposureModeSupported(.locked) { device.exposureMode = .locked }
+                // Tempo di scatto breve (foto nitide anche muovendosi) compensato con la sensibilità
+                let target = CMTime(value: 1, timescale: 120)
+                let current = device.exposureDuration
+                if device.isExposureModeSupported(.custom), current.seconds > target.seconds,
+                   target >= device.activeFormat.minExposureDuration {
+                    let factor = Float(current.seconds / target.seconds)
+                    let iso = min(max(device.iso * factor, device.activeFormat.minISO), device.activeFormat.maxISO)
+                    device.setExposureModeCustom(duration: target, iso: iso, completionHandler: nil)
+                } else if device.isExposureModeSupported(.locked) {
+                    device.exposureMode = .locked
+                }
                 if device.isWhiteBalanceModeSupported(.locked) { device.whiteBalanceMode = .locked }
             } else {
                 if device.isExposureModeSupported(.continuousAutoExposure) { device.exposureMode = .continuousAutoExposure }
@@ -531,7 +541,7 @@ struct MeshScanView: View {
         case .done:
             if let info = scanner.resultInfo {
                 Text("Mesh pronta: \(info.faces) triangoli, \(info.keyframes) foto.")
-                Text("\(info.sourceText) · elaborazione \(Int((info.processingSeconds ?? 0).rounded())) s")
+                Text("\(info.sourceText) · elaborazione \(Int((info.processingSeconds ?? 0).rounded())) s · texture \(Int(((info.textureScale ?? 1) * 100).rounded()))%")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

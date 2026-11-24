@@ -137,13 +137,14 @@ enum MeshCleanup {
 
 enum TextureAtlas {
     static let pageSize = 4096
-    static let maxPages = 3
+    static let maxPages = 4
     static let pad: CGFloat = 4
 
     struct Result {
         var pages: Int
         var uv: [SIMD2<Float>]   // per angolo di triangolo, origine in alto a sinistra (0…1)
         var page: [UInt8]        // per triangolo
+        var scale: Double = 1    // risoluzione delle texture rispetto alle foto originali
     }
 
     private struct Chart {
@@ -221,7 +222,7 @@ enum TextureAtlas {
                 while i < local_charts.count {
                     var j = i + 1
                     while j < local_charts.count {
-                        if local_charts[i].rect.insetBy(dx: -12, dy: -12).intersects(local_charts[j].rect) {
+                        if local_charts[i].rect.insetBy(dx: -2, dy: -2).intersects(local_charts[j].rect) {
                             local_charts[i].rect = local_charts[i].rect.union(local_charts[j].rect)
                             local_charts[i].faces += local_charts[j].faces
                             local_charts.remove(at: j)
@@ -346,7 +347,7 @@ enum TextureAtlas {
         for p in pagesUsed..<(maxPages + 2) {
             try? FileManager.default.removeItem(at: exportDir.appendingPathComponent("texture_\(p).jpg"))
         }
-        return Result(pages: pagesUsed, uv: uv, page: page)
+        return Result(pages: pagesUsed, uv: uv, page: page, scale: Double(s))
     }
 }
 

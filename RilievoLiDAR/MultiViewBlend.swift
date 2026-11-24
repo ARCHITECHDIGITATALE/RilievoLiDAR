@@ -120,7 +120,8 @@ enum MultiViewBlend {
                             }
                         }
                         if wsum <= 0 { continue }
-                        let off = (sum / wsum - primary.0) * 255
+                        let limit = SIMD3<Float>(repeating: 0.15)
+                        let off = simd_clamp(sum / wsum - primary.0, -limit, limit) * 255
                         let i = y * bytesPerRow + x * 4
                         base[i] = UInt8(max(0, min(255, Float(base[i]) + off.x)))
                         base[i + 1] = UInt8(max(0, min(255, Float(base[i + 1]) + off.y)))

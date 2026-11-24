@@ -305,8 +305,10 @@ enum MeshExporter {
 
         // 5. Atlante delle texture (ritagli delle foto impacchettati in poche immagini)
         progress(0.66, "Creazione delle texture…")
+        // Per la fusione tra foto si usa solo il tono molto sfumato (niente dettagli "fantasma")
+        let toneImages: [RGBAPixels?] = small.map { $0.map { ImageUtils.boxBlur($0, radius: 3) } }
         let atlas = try TextureAtlas.build(faceCam: faceCam, faceUV: faceUV, indices: I, cams: cams,
-                                           gains: gains, vertices: V, candCam: candCam, K: K, small: small,
+                                           gains: gains, vertices: V, candCam: candCam, K: K, small: toneImages,
                                            exportDir: exportDir) { p in
             progress(0.66 + 0.16 * p, "Creazione delle texture…")
         }
@@ -383,8 +385,10 @@ enum MeshExporter {
                      to: folder.appendingPathComponent("preview.scn"))
 
         progress(1, "Completato")
-        return MeshInfo(date: Date(), keyframes: keyframes.count, faces: fCount,
-                        texturedFaces: fCount - untextured.count)
+        var info = MeshInfo(date: Date(), keyframes: keyframes.count, faces: fCount,
+                            texturedFaces: fCount - untextured.count)
+        info.textureScale = atlas.scale
+        return info
     }
 
     static func writePreview(vertices: [SIMD3<Float>], indices: [UInt32], colors: [SIMD3<Float>], to url: URL) {
