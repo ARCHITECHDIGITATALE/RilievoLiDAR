@@ -52,7 +52,7 @@ enum MeshExporter {
         // Sulla mesh di ARKit si tengono anche i pezzetti piccoli (vetri smerigliati) e i bordi.
         let refined = MeshCleanup.refine(MeshCleanup.clean(mesh, minComponentFaces: fused ? 40 : 6),
                                          smoothIterations: fused ? 8 : 2,
-                                         maxHoleEdges: fused ? 48 : 30,
+                                         maxHolePerimeter: fused ? 3 : 7,
                                          fringePasses: fused ? 2 : 0)
         let clean = MeshCleanup.subdivideLong(refined, maxEdge: 0.06, passes: 3)
         let V = clean.vertices

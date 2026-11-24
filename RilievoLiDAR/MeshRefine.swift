@@ -9,11 +9,11 @@ extension MeshCleanup {
         (UInt64(min(a, b)) << 32) | UInt64(max(a, b))
     }
 
-    static func refine(_ mesh: MeshData, smoothIterations: Int = 8, maxHoleEdges: Int = 48,
+    static func refine(_ mesh: MeshData, smoothIterations: Int = 8, maxHolePerimeter: Float = 3,
                        fringePasses: Int = 2) -> MeshData {
         var indices = fringePasses > 0 ? removeFringe(mesh.indices, passes: fringePasses) : mesh.indices
         var vertices = mesh.vertices
-        fillSmallHoles(&vertices, &indices, maxEdges: maxHoleEdges)
+        fillHoles(&vertices, &indices, maxPerimeter: maxHolePerimeter, maxDeviation: 0.15)
         vertices = taubinSmooth(vertices, indices, iterations: smoothIterations)
         return compact(vertices, indices)
     }

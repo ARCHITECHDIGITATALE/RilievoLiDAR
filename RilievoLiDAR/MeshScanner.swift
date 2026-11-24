@@ -166,12 +166,12 @@ final class MeshScanner: NSObject, ObservableObject, ARSessionDelegate {
         guard trackingOK else { return }
 
         if let last = lastTransform {
-            if frame.timestamp - lastTime < 0.5 { return }
+            if frame.timestamp - lastTime < 0.3 { return }
             let moved = simd_distance(t.translation, last.translation)
             let f1 = -SIMD3<Float>(t.columns.2.x, t.columns.2.y, t.columns.2.z)
             let f0 = -SIMD3<Float>(last.columns.2.x, last.columns.2.y, last.columns.2.z)
             let angle = acos(max(-1, min(1, simd_dot(f0, f1)))) * 180 / Float.pi
-            if moved < 0.2 && angle < 12 { return }
+            if moved < 0.1 && angle < 8 { return }
         }
 
         busy = true
