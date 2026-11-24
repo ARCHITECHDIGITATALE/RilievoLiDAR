@@ -8,7 +8,7 @@ enum SeamLeveling {
     /// Restituisce una correzione di colore (0…1) per ogni angolo di triangolo.
     static func solve(faceCam: [Int32], faceUV: [SIMD2<Float>], indices: [UInt32], vertexCount: Int,
                       cams: [MeshExporter.Cam], small: [RGBAPixels?], gains: [SIMD3<Float>],
-                      iterations: Int = 90) -> [SIMD3<Float>] {
+                      iterations: Int = 220) -> [SIMD3<Float>] {
         let fCount = faceCam.count
         var cornerOffset = [SIMD3<Float>](repeating: SIMD3<Float>(0, 0, 0), count: fCount * 3)
 

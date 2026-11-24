@@ -9,8 +9,9 @@ extension MeshCleanup {
         (UInt64(min(a, b)) << 32) | UInt64(max(a, b))
     }
 
-    static func refine(_ mesh: MeshData, smoothIterations: Int = 8, maxHoleEdges: Int = 48) -> MeshData {
-        var indices = removeFringe(mesh.indices, passes: 2)
+    static func refine(_ mesh: MeshData, smoothIterations: Int = 8, maxHoleEdges: Int = 48,
+                       fringePasses: Int = 2) -> MeshData {
+        var indices = fringePasses > 0 ? removeFringe(mesh.indices, passes: fringePasses) : mesh.indices
         var vertices = mesh.vertices
         fillSmallHoles(&vertices, &indices, maxEdges: maxHoleEdges)
         vertices = taubinSmooth(vertices, indices, iterations: smoothIterations)
@@ -137,6 +138,63 @@ extension MeshCleanup {
             step(-0.53)
         }
         return v
+    }
+
+    /// Divide i triangoli con lati più lunghi di maxEdge (punto medio dei lati, senza crepe tra vicini).
+    /// Le pareti piatte di ARKit hanno triangoli grandi: dividendoli, i cambi di foto e la sfumatura
+    /// delle cuciture diventano fini invece che a blocchi.
+    static func subdivideLong(_ mesh: MeshData, maxEdge: Float, passes: Int) -> MeshData {
+        var V = mesh.vertices
+        var I = mesh.indices
+        let max2 = maxEdge * maxEdge
+        for _ in 0..<passes {
+            var mids = [UInt64: UInt32]()
+            var anySplit = false
+            func mid(_ a: UInt32, _ b: UInt32) -> UInt32? {
+                let d = V[Int(a)] - V[Int(b)]
+                if simd_dot(d, d) <= max2 { return nil }
+                let key = edgeKey(a, b)
+                if let m = mids[key] { return m }
+                let m = UInt32(V.count)
+                V.append((V[Int(a)] + V[Int(b)]) * 0.5)
+                mids[key] = m
+                return m
+            }
+            var out: [UInt32] = []
+            out.reserveCapacity(I.count * 2)
+            var t = 0
+            while t + 2 < I.count {
+                let tri = [I[t], I[t + 1], I[t + 2]]
+                t += 3
+                let m: [UInt32?] = [mid(tri[0], tri[1]), mid(tri[1], tri[2]), mid(tri[2], tri[0])]
+                let present = m.filter { $0 != nil }.count
+                switch present {
+                case 0:
+                    out.append(contentsOf: tri)
+                case 3:
+                    anySplit = true
+                    let a = tri[0], b = tri[1], c = tri[2]
+                    let ab = m[0]!, bc = m[1]!, ca = m[2]!
+                    out.append(contentsOf: [a, ab, ca, ab, b, bc, ca, bc, c, ab, bc, ca])
+                case 1:
+                    anySplit = true
+                    let r = m.firstIndex { $0 != nil }!
+                    let t0 = tri[r], t1 = tri[(r + 1) % 3], t2 = tri[(r + 2) % 3]
+                    let m01 = m[r]!
+                    out.append(contentsOf: [t0, m01, t2, m01, t1, t2])
+                default:
+                    anySplit = true
+                    let missing = m.firstIndex { $0 == nil }!
+                    let r = (missing + 1) % 3
+                    let t0 = tri[r], t1 = tri[(r + 1) % 3], t2 = tri[(r + 2) % 3]
+                    let m01 = m[r]!, m12 = m[(r + 1) % 3]!
+                    out.append(contentsOf: [m01, t1, m12, t0, m01, m12, t0, m12, t2])
+                }
+            }
+            I = out
+            if !anySplit { break }
+        }
+        return MeshData(vertices: V, indices: I)
     }
 
     static func compact(_ vertices: [SIMD3<Float>], _ indices: [UInt32]) -> MeshData {

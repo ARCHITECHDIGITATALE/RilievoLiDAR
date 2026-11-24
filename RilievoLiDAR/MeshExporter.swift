@@ -49,9 +49,12 @@ enum MeshExporter {
 
         progress(0.01, "Pulizia della mesh…")
         // La mesh di ARKit è già levigata: rifinitura leggera e solo buchi piccoli.
-        let clean = MeshCleanup.refine(MeshCleanup.clean(mesh),
-                                       smoothIterations: fused ? 8 : 2,
-                                       maxHoleEdges: fused ? 48 : 20)
+        // Sulla mesh di ARKit si tengono anche i pezzetti piccoli (vetri smerigliati) e i bordi.
+        let refined = MeshCleanup.refine(MeshCleanup.clean(mesh, minComponentFaces: fused ? 40 : 6),
+                                         smoothIterations: fused ? 8 : 2,
+                                         maxHoleEdges: fused ? 48 : 30,
+                                         fringePasses: fused ? 2 : 0)
+        let clean = MeshCleanup.subdivideLong(refined, maxEdge: 0.06, passes: 3)
         let V = clean.vertices
         let I = clean.indices
         let vCount = V.count
@@ -168,7 +171,7 @@ enum MeshExporter {
         var faceCam = [Int32](repeating: -1, count: fCount)
         for f in 0..<fCount { faceCam[f] = candCam[f * K] }
         let neighbors = MeshCleanup.faceNeighbors(I)
-        for _ in 0..<10 {
+        for _ in 0..<16 {
             var next = faceCam
             for f in 0..<fCount where candCam[f * K] >= 0 {
                 let best = candScore[f * K]
@@ -182,7 +185,7 @@ enum MeshExporter {
                         let g = neighbors[f * 3 + e]
                         if g >= 0 && faceCam[Int(g)] == cam { same += 1 }
                     }
-                    let value = candScore[f * K + j] / best + 0.9 * same
+                    let value = candScore[f * K + j] / best + 1.5 * same
                     if value > chosenValue {
                         chosenValue = value
                         chosen = cam
