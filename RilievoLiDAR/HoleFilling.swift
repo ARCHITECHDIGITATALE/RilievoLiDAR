@@ -10,36 +10,38 @@ extension MeshCleanup {
     static func fillHoles(_ vertices: inout [SIMD3<Float>], _ indices: inout [UInt32],
                           maxPerimeter: Float, maxDeviation: Float, maxLoop: Int = 1500) {
         let use = edgeUse(indices)
-        var next = [UInt32: UInt32]()
-        var bad = Set<UInt32>()
+        // Lati di bordo orientati; un vertice può averne più d'uno (contorni irregolari).
+        var next = [UInt32: [UInt32]]()
         var t = 0
         while t + 2 < indices.count {
             let tri = [indices[t], indices[t + 1], indices[t + 2]]
             t += 3
             for k in 0..<3 {
                 let a = tri[k], b = tri[(k + 1) % 3]
-                if use[edgeKey(a, b)] == 1 {
-                    if next[b] != nil { bad.insert(b) }
-                    next[b] = a
-                }
+                if use[edgeKey(a, b)] == 1 { next[b, default: []].append(a) }
             }
         }
+        var usedEdge = Set<UInt64>()
         var visited = Set<UInt32>()
-        for start in next.keys where !visited.contains(start) && !bad.contains(start) {
+        for start in next.keys.sorted() where !visited.contains(start) {
             var loop: [UInt32] = []
             var v = start
             var closed = false
+            var onLoop = Set<UInt32>()
             while loop.count <= maxLoop {
-                if visited.contains(v) || bad.contains(v) { break }
-                visited.insert(v)
                 loop.append(v)
-                guard let n = next[v] else { break }
+                onLoop.insert(v)
+                guard let outs = next[v],
+                      let n = outs.first(where: { !usedEdge.contains((UInt64(v) << 32) | UInt64($0)) && ($0 == start || !onLoop.contains($0)) })
+                else { break }
+                usedEdge.insert((UInt64(v) << 32) | UInt64(n))
                 if n == start {
                     closed = true
                     break
                 }
                 v = n
             }
+            for x in loop { visited.insert(x) }
             guard closed, loop.count >= 3 else { continue }
             let pts = loop.map { vertices[Int($0)] }
 

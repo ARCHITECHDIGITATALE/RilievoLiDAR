@@ -89,7 +89,7 @@ enum MeshExporter {
                 if let img = ImageUtils.thumbnail(at: url, maxPixel: 480), let px = ImageUtils.rgbaPixels(img) {
                     rawSharp[k] = ImageUtils.sharpness(px)
                 }
-                if let img = ImageUtils.thumbnail(at: url, maxPixel: 200) {
+                if let img = ImageUtils.thumbnail(at: url, maxPixel: 256) {
                     small[k] = ImageUtils.rgbaPixels(img)
                 }
             }
@@ -99,7 +99,7 @@ enum MeshExporter {
         let sharp: [Float] = rawSharp.map { r in r > 0 ? min(1.2, max(0.3, (r / medianSharp).squareRoot())) : 0.6 }
 
         // 2. Foto candidate per ogni triangolo (le migliori K)
-        let K = 4
+        let K = 6
         var candCam = [Int32](repeating: -1, count: fCount * K)
         var candScore = [Float](repeating: 0, count: fCount * K)
         let chunks = 64
@@ -260,11 +260,6 @@ enum MeshExporter {
                 }
             }
         }
-        // Livellamento delle cuciture tra una foto e l'altra
-        progress(0.49, "Sfumatura delle cuciture tra le foto…")
-        let cornerOffset = SeamLeveling.solve(faceCam: faceCam, faceUV: faceUV, indices: I, vertexCount: vCount,
-                                              cams: cams, small: small, gains: gains)
-        small = []
 
         var groups = [[Int]](repeating: [], count: cams.count)
         var untextured: [Int] = []
@@ -309,7 +304,7 @@ enum MeshExporter {
         // 5. Atlante delle texture (ritagli delle foto impacchettati in poche immagini)
         progress(0.66, "Creazione delle texture…")
         let atlas = try TextureAtlas.build(faceCam: faceCam, faceUV: faceUV, indices: I, cams: cams,
-                                           gains: gains, cornerOffset: cornerOffset,
+                                           gains: gains, vertices: V, candCam: candCam, K: K, small: small,
                                            exportDir: exportDir) { p in
             progress(0.66 + 0.16 * p, "Creazione delle texture…")
         }
