@@ -19,8 +19,8 @@ enum ExportService {
             PlanBuilder.data(for: $0.room, name: $0.record.name, path: $0.record.path ?? [])
         }
         var markers: [PhotoMarker] = []
-        for (i, p) in project.photos.enumerated() where p.source == "stanze" && p.position.count == 3 {
-            markers.append(PhotoMarker(number: i + 1, point: PlanBuilder.plan(SIMD3<Float>(p.position[0], p.position[1], p.position[2]))))
+        for (i, p) in project.photos.enumerated() where p.source == "stanze" {
+            if let m = PhotoMarker.from(number: i + 1, record: p, plan: { PlanBuilder.plan($0) }) { markers.append(m) }
         }
         return (rooms, markers)
     }
@@ -108,13 +108,13 @@ enum ExportService {
         return url
     }
 
-    static func meshPlanPDF(project: Project, folder: URL) async throws -> URL {
+    static func meshPlanPDF(project: Project, folder: URL, showFloor: Bool = false) async throws -> URL {
         let url = outURL(project, "pianta_mesh.pdf")
         let photos = project.photos.enumerated().map { (number: $0.offset + 1, record: $0.element) }
         let name = project.name
         try await Task.detached(priority: .userInitiated) {
             try MeshPlanExport.pdf(try meshData(folder), projectName: name, photos: photos,
-                                   projectFolder: folder, to: url)
+                                   projectFolder: folder, showFloor: showFloor, to: url)
         }.value
         return url
     }

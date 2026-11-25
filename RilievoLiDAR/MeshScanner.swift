@@ -424,6 +424,8 @@ struct MeshScanView: View {
     @State private var showNote = false
     @AppStorage("depthFusion") private var depthFusion = false
     @State private var noteText = ""
+    @State private var widthText = ""
+    @State private var heightText = ""
     @State private var pendingPhotoID: UUID?
 
     var body: some View {
@@ -467,17 +469,10 @@ struct MeshScanView: View {
                 .padding()
             }
         }
-        .alert("Nota per la foto", isPresented: $showNote) {
-            TextField("Nota (facoltativa)", text: $noteText)
-            Button("Salva") {
-                saveNote()
-                scanner.paused = false
-            }
-            Button("Salta", role: .cancel) {
-                scanner.paused = false
-            }
-        } message: {
-            Text("La registrazione è in pausa: tieni l'iPad fermo, riprende dopo la nota.")
+        .sheet(isPresented: $showNote, onDismiss: { scanner.paused = false }) {
+            PhotoNoteForm(note: $noteText, width: $widthText, height: $heightText,
+                          message: "La registrazione è in pausa: riprende quando chiudi la nota.",
+                          onSave: { saveNote() }, onSkip: {})
         }
     }
 
@@ -563,14 +558,22 @@ struct MeshScanView: View {
         store.update(projectID) { $0.photos.append(record) }
         pendingPhotoID = record.id
         noteText = ""
+        widthText = ""
+        heightText = ""
         showNote = true
     }
 
     private func saveNote() {
         guard let id = pendingPhotoID else { return }
         let text = noteText
+        let w = PhotoAim.parseMeters(widthText)
+        let h = PhotoAim.parseMeters(heightText)
         store.update(projectID) { p in
-            if let i = p.photos.firstIndex(where: { $0.id == id }) { p.photos[i].note = text }
+            if let i = p.photos.firstIndex(where: { $0.id == id }) {
+                p.photos[i].note = text
+                p.photos[i].width = w
+                p.photos[i].height = h
+            }
         }
     }
 }

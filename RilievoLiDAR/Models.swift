@@ -20,6 +20,10 @@ struct PhotoRecord: Codable, Identifiable, Hashable {
     var date: Date
     var position: [Float]     // posizione della camera x, y, z (metri)
     var source: String        // "stanze" oppure "mesh"
+    var direction: [Float]?   // direzione di ripresa (avanti della fotocamera) x, y, z
+    var target: [Float]?      // punto inquadrato al centro della foto x, y, z (se c'è la profondità)
+    var width: Float?         // larghezza misurata scritta nella nota (metri)
+    var height: Float?        // altezza misurata scritta nella nota (metri)
 }
 
 struct MeshInfo: Codable, Hashable {

@@ -145,7 +145,7 @@ enum MeshPlanExport {
     // MARK: PDF
 
     static func pdf(_ d: Loaded, projectName: String, photos: [(number: Int, record: PhotoRecord)],
-                    projectFolder: URL, to url: URL) throws {
+                    projectFolder: URL, showFloor: Bool = false, to url: URL) throws {
         let segments = d.geometry.section(at: d.sectionY)
         let scale = d.scale
         let page = PlanPDF.page
@@ -189,6 +189,15 @@ enum MeshPlanExport {
                 cg.move(to: toPage(a))
                 cg.addLine(to: toPage(b))
                 cg.strokePath()
+                cg.restoreGState()
+            }
+
+            // Pavimento della mesh visto dall'alto (immagine sotto alle linee)
+            if showFloor, let floor = floorImage(d, lo: lo, hi: hi, pixelsPerMeter: k * 3) {
+                cg.saveGState()
+                cg.interpolationQuality = .high
+                let rect = CGRect(x: ox, y: oy, width: CGFloat(hi.x - lo.x) * k, height: CGFloat(hi.y - lo.y) * k)
+                UIImage(cgImage: floor).draw(in: rect)
                 cg.restoreGState()
             }
 
@@ -239,16 +248,10 @@ enum MeshPlanExport {
                 PlanPDF.drawText("N\(i + 1)", at: CGPoint(x: c.x + 5, y: c.y - 5), size: 7, bold: true, color: .systemBlue)
             }
 
-            // Foto con posizione
-            for item in photos where item.record.position.count == 3 {
-                let r = item.record
-                let c = toPage(plan(SIMD3<Float>(r.position[0], r.position[1], r.position[2]), scale))
-                cg.saveGState()
-                cg.setFillColor(UIColor.systemRed.cgColor)
-                cg.fillEllipse(in: CGRect(x: c.x - 6, y: c.y - 6, width: 12, height: 12))
-                cg.restoreGState()
-                PlanPDF.drawCentered("\(item.number)", at: c, angle: 0, size: 6, bold: true, color: .white, in: cg)
-            }
+            // Foto: direzione di ripresa, misure della nota, numero
+            let markers = photos.compactMap { PhotoMarker.from(number: $0.number, record: $0.record, plan: { plan($0, scale) }) }
+            let walls = segments.map { (plan($0.0, scale), plan($0.1, scale)) }
+            PhotoMarkerDrawing.draw(markers, segments: walls, toPage: toPage, pageScale: k, in: cg)
 
             // Scala grafica
             let meters: CGFloat = k >= 25 ? 1 : (k >= 6 ? 5 : 10)
@@ -265,7 +268,7 @@ enum MeshPlanExport {
             cg.strokePath()
             cg.restoreGState()
             PlanPDF.drawText("\(Int(meters)) m", at: CGPoint(x: 56 + meters * k, y: barY - 6), size: 8)
-            PlanPDF.drawText("— = sezione della mesh   ● = foto   N = nota   - - - = percorso di scansione",
+            PlanPDF.drawText("— = sezione della mesh   ● = foto con direzione di ripresa   blu = misure delle note   N = nota   - - - = percorso",
                              at: CGPoint(x: 200, y: barY - 6), size: 7, color: .darkGray)
 
             // Tabella
@@ -293,6 +296,16 @@ enum MeshPlanExport {
                     cur.row(["N\(i + 1)", n.text], widths: [40, 580])
                 }
             }
+            let measured = photos.filter { $0.record.measuresText != nil }
+            if !measured.isEmpty {
+                cur.space(10)
+                cur.row(["Foto", "Misure", "Nota"], widths: [40, 160, 420], bold: true)
+                for item in measured {
+                    let note = item.record.note.replacingOccurrences(of: "\n", with: " ")
+                    cur.row(["\(item.number)", item.record.measuresText ?? "", String(note.prefix(80))],
+                            widths: [40, 160, 420])
+                }
+            }
             if scale != 1 {
                 cur.space(10)
                 cur.line("Scala calibrata: \(String(format: "%.4f", scale))", size: 9)
@@ -300,6 +313,47 @@ enum MeshPlanExport {
 
             PlanPDF.drawPhotos(ctx, photos: photos, folder: projectFolder)
         }
+    }
+
+    /// Immagine del pavimento vista dall'alto, dai colori della mesh (zona [lo, hi] della pianta).
+    static func floorImage(_ d: Loaded, lo: SIMD2<Float>, hi: SIMD2<Float>, pixelsPerMeter: CGFloat) -> CGImage? {
+        let g = d.geometry
+        guard g.colors.count == g.vertices.count else { return nil }
+        let scale = d.scale
+        let wm = CGFloat(hi.x - lo.x), hm = CGFloat(hi.y - lo.y)
+        let ppm = min(pixelsPerMeter, 3000 / max(wm, hm, 0.1))
+        let w = max(1, Int(wm * ppm)), h = max(1, Int(hm * ppm))
+        let space = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.clear(CGRect(x: 0, y: 0, width: w, height: h))
+        ctx.setShouldAntialias(true)
+        func px(_ p: SIMD3<Float>) -> CGPoint {
+            let q = plan(p, scale)
+            // y della bitmap verso l'alto: nord della pianta in alto come nella pagina
+            return CGPoint(x: CGFloat(q.x - lo.x) * ppm, y: CGFloat(q.y - lo.y) * ppm)
+        }
+        var t = 0
+        while t + 2 < g.indices.count {
+            let ia = Int(g.indices[t]), ib = Int(g.indices[t + 1]), ic = Int(g.indices[t + 2])
+            t += 3
+            let a = g.vertices[ia], b = g.vertices[ib], c = g.vertices[ic]
+            let cr = simd_cross(b - a, c - a)
+            let len = simd_length(cr)
+            if len < 1e-10 || abs(cr.y) / len < 0.75 { continue }
+            let cy = (a.y + b.y + c.y) / 3
+            if abs(cy - d.floorY) > 0.08 { continue }
+            let col = (g.colors[ia] + g.colors[ib] + g.colors[ic]) / 3
+            ctx.setFillColor(red: CGFloat(col.x), green: CGFloat(col.y), blue: CGFloat(col.z), alpha: 1)
+            ctx.setStrokeColor(red: CGFloat(col.x), green: CGFloat(col.y), blue: CGFloat(col.z), alpha: 1)
+            ctx.setLineWidth(0.6)
+            ctx.move(to: px(a))
+            ctx.addLine(to: px(b))
+            ctx.addLine(to: px(c))
+            ctx.closePath()
+            ctx.drawPath(using: .fillStroke)
+        }
+        return ctx.makeImage()
     }
 
     // MARK: USDZ

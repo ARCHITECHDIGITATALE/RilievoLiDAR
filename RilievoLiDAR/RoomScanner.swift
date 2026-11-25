@@ -105,6 +105,8 @@ struct RoomScanView: View {
 
     @State private var showNote = false
     @State private var noteText = ""
+    @State private var widthText = ""
+    @State private var heightText = ""
     @State private var pendingPhotoID: UUID?
     @State private var flash = false
 
@@ -160,12 +162,10 @@ struct RoomScanView: View {
         .onReceive(Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()) { _ in
             scanner.samplePath()
         }
-        .alert("Nota per la foto", isPresented: $showNote) {
-            TextField("Nota (facoltativa)", text: $noteText)
-            Button("Salva") { saveNote() }
-            Button("Salta", role: .cancel) {}
-        } message: {
-            Text("RoomPlan non si può mettere in pausa: tieni l'iPad fermo mentre scrivi, oppure salta e aggiungi la nota dopo dalla galleria.")
+        .sheet(isPresented: $showNote) {
+            PhotoNoteForm(note: $noteText, width: $widthText, height: $heightText,
+                          message: "RoomPlan non si può mettere in pausa: tieni l'iPad fermo mentre scrivi, oppure salta e completa la nota dopo dalla galleria.",
+                          onSave: { saveNote() }, onSkip: {})
         }
     }
 
@@ -229,14 +229,22 @@ struct RoomScanView: View {
         }
         pendingPhotoID = record.id
         noteText = ""
+        widthText = ""
+        heightText = ""
         showNote = true
     }
 
     private func saveNote() {
         guard let id = pendingPhotoID else { return }
         let text = noteText
+        let w = PhotoAim.parseMeters(widthText)
+        let h = PhotoAim.parseMeters(heightText)
         store.update(projectID) { p in
-            if let i = p.photos.firstIndex(where: { $0.id == id }) { p.photos[i].note = text }
+            if let i = p.photos.firstIndex(where: { $0.id == id }) {
+                p.photos[i].note = text
+                p.photos[i].width = w
+                p.photos[i].height = h
+            }
         }
     }
 

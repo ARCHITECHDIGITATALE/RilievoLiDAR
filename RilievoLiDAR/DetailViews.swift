@@ -87,6 +87,8 @@ struct PhotoDetailView: View {
     @EnvironmentObject var store: ProjectStore
     @Environment(\.dismiss) private var dismiss
     @State private var note = ""
+    @State private var widthText = ""
+    @State private var heightText = ""
     @State private var image: UIImage?
     @State private var confirmDelete = false
 
@@ -106,6 +108,24 @@ struct PhotoDetailView: View {
                     TextField("Nota", text: $note, axis: .vertical)
                         .textFieldStyle(.roundedBorder)
                         .lineLimit(3...8)
+                    HStack(spacing: 12) {
+                        Text("Larghezza")
+                        TextField("m", text: $widthText)
+                            .keyboardType(.decimalPad)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 110)
+                        Text("Altezza")
+                        TextField("m", text: $heightText)
+                            .keyboardType(.decimalPad)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 110)
+                        Text("m").foregroundStyle(.secondary)
+                    }
+                    if photo.direction != nil {
+                        Text("Nella pianta la quota viene disegnata sul muro verso cui puntava la foto.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     Button(role: .destructive) {
                         confirmDelete = true
                     } label: {
@@ -136,6 +156,8 @@ struct PhotoDetailView: View {
             }
             .onAppear {
                 note = photo.note
+                widthText = PhotoAim.text(photo.width)
+                heightText = PhotoAim.text(photo.height)
                 image = UIImage(contentsOfFile: store.folder(for: projectID).appendingPathComponent(photo.file).path)
             }
         }
@@ -144,8 +166,14 @@ struct PhotoDetailView: View {
     private func save() {
         let text = note
         let id = photo.id
+        let w = PhotoAim.parseMeters(widthText)
+        let h = PhotoAim.parseMeters(heightText)
         store.update(projectID) { p in
-            if let i = p.photos.firstIndex(where: { $0.id == id }) { p.photos[i].note = text }
+            if let i = p.photos.firstIndex(where: { $0.id == id }) {
+                p.photos[i].note = text
+                p.photos[i].width = w
+                p.photos[i].height = h
+            }
         }
     }
 

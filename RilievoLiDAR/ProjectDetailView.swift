@@ -24,6 +24,7 @@ struct ProjectDetailView: View {
     @State private var roomToRename: RoomRecord?
     @State private var renameText = ""
     @State private var selectedPhoto: PhotoSelection?
+    @State private var askPDFStyle = false
 
     private var folder: URL { store.folder(for: projectID) }
 
@@ -229,14 +230,29 @@ struct ProjectDetailView: View {
             .disabled(!hasRooms && !hasMesh)
 
             Button {
-                runExport("Creazione della pianta…") {
-                    if hasRooms { return try ExportService.planPDF(project: project, folder: f) }
-                    return try await ExportService.meshPlanPDF(project: project, folder: f)
+                if hasRooms {
+                    runExport("Creazione della pianta…") { try ExportService.planPDF(project: project, folder: f) }
+                } else {
+                    askPDFStyle = true
                 }
             } label: {
                 Label("Pianta quotata con foto (PDF)", systemImage: "doc.richtext")
             }
             .disabled(!hasRooms && !hasMesh)
+            .confirmationDialog("Pianta PDF dalla mesh", isPresented: $askPDFStyle, titleVisibility: .visible) {
+                Button("Con il pavimento della mesh") {
+                    runExport("Creazione della pianta…") {
+                        try await ExportService.meshPlanPDF(project: project, folder: f, showFloor: true)
+                    }
+                }
+                Button("Solo linee") {
+                    runExport("Creazione della pianta…") {
+                        try await ExportService.meshPlanPDF(project: project, folder: f, showFloor: false)
+                    }
+                }
+            } message: {
+                Text("Con il pavimento: sotto le linee compare il pavimento visto dall'alto con i colori reali.")
+            }
 
             Button {
                 runExport("Creazione del DXF…") {

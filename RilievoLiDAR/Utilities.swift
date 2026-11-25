@@ -222,7 +222,9 @@ enum PhotoSaver {
             return nil
         }
         let t = frame.camera.transform.translation
+        let aim = PhotoAim.from(frame: frame)
         return PhotoRecord(id: id, file: file, thumbFile: thumb, note: "", date: Date(),
-                           position: [t.x, t.y, t.z], source: source)
+                           position: [t.x, t.y, t.z], source: source,
+                           direction: aim.direction, target: aim.target)
     }
 }

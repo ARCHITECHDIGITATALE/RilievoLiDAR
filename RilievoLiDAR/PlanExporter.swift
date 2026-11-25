@@ -50,6 +50,10 @@ struct RoomPlanData {
 struct PhotoMarker {
     var number: Int
     var point: SIMD2<Float>
+    var dir: SIMD2<Float>? = nil      // direzione di ripresa in pianta
+    var target: SIMD2<Float>? = nil   // punto inquadrato in pianta
+    var width: Float? = nil
+    var height: Float? = nil
 }
 
 enum PlanBuilder {
@@ -307,15 +311,9 @@ enum PlanPDF {
             cg.restoreGState()
         }
 
-        // Punti di ripresa delle foto
-        for m in markers {
-            let p = toPage(m.point)
-            cg.saveGState()
-            cg.setFillColor(UIColor.systemRed.cgColor)
-            cg.fillEllipse(in: CGRect(x: p.x - 6, y: p.y - 6, width: 12, height: 12))
-            cg.restoreGState()
-            drawCentered("\(m.number)", at: p, angle: 0, size: 6, bold: true, color: .white, in: cg)
-        }
+        // Punti di ripresa delle foto: direzione, misure della nota, numero
+        let wallSegments = rooms.flatMap { r in r.walls.map { ($0.a, $0.b) } }
+        PhotoMarkerDrawing.draw(markers, segments: wallSegments, toPage: toPage, pageScale: s, in: cg)
 
         // Scala grafica
         let meters: CGFloat = s >= 25 ? 1 : (s >= 6 ? 5 : 10)
@@ -332,7 +330,7 @@ enum PlanPDF {
         cg.strokePath()
         cg.restoreGState()
         drawText("\(Int(meters)) m", at: CGPoint(x: 56 + meters * s, y: barY - 6), size: 8)
-        drawText("P = porta (larg.×alt.)   F = finestra (larg.×alt., p. = parapetto)   A = apertura   ● = foto   - - - = percorso di scansione",
+        drawText("P = porta   F = finestra (p. = parapetto)   A = apertura   ● = foto con direzione di ripresa   blu = misure delle note   - - - = percorso",
                  at: CGPoint(x: 200, y: barY - 6), size: 7, color: .darkGray)
     }
 
@@ -408,7 +406,8 @@ enum PlanPDF {
             }
             drawText("Foto \(item.number) – \(Fmt.date(item.record.date))", at: CGPoint(x: x, y: y + imageBox + 8),
                      size: 9, bold: true)
-            let note = item.record.note.isEmpty ? "(nessuna nota)" : item.record.note
+            var note = item.record.note.isEmpty ? "(nessuna nota)" : item.record.note
+            if let m = item.record.measuresText { note = m + "\n" + note }
             drawText(note, in: CGRect(x: x, y: y + imageBox + 24, width: colWidth, height: 90), size: 9)
         }
     }
