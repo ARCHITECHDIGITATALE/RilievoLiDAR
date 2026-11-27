@@ -119,7 +119,41 @@ enum PhotoMarkerDrawing {
     /// pageScale = punti di pagina per metro.
     static func draw(_ markers: [PhotoMarker], segments: [(SIMD2<Float>, SIMD2<Float>)],
                      toPage: (SIMD2<Float>) -> CGPoint, pageScale: CGFloat, in cg: CGContext) {
-        // 1. Coni di visuale (sotto a tutto)
+        // Dimensione proporzionata alla scala (circa 25 cm reali): su piante grandi i pallini sono piccoli,
+        // ma restano nitidi ingrandendo il PDF perché vettoriali.
+        let r: CGFloat = max(3, min(6.5, pageScale * 0.125))
+        let fontSize: CGFloat = max(3.4, r * 1.05)
+
+        // Posizione dei pallini: se due foto sono quasi nello stesso punto, il pallino si sposta di lato
+        // ed è collegato con una lineetta al punto esatto di ripresa.
+        var centers: [CGPoint] = []
+        let minGap = 2 * r + 3.2
+        func free(_ c: CGPoint) -> Bool {
+            !centers.contains { hypot($0.x - c.x, $0.y - c.y) < minGap }
+        }
+        for m in markers {
+            let p = toPage(m.point)
+            var c = p
+            if !free(p) {
+                var found = false
+                search: for ring in 1...6 {
+                    for k in 0..<8 {
+                        let a = CGFloat(k) * .pi / 4 + CGFloat(ring) * .pi / 8
+                        let cand = CGPoint(x: p.x + cos(a) * minGap * CGFloat(ring),
+                                           y: p.y + sin(a) * minGap * CGFloat(ring))
+                        if free(cand) {
+                            c = cand
+                            found = true
+                            break search
+                        }
+                    }
+                }
+                if !found { c = p }
+            }
+            centers.append(c)
+        }
+
+        // 1. Coni di visuale (sotto a tutto), dal punto esatto di ripresa
         for m in markers {
             guard let d = m.dir else { continue }
             let c = toPage(m.point)
@@ -127,7 +161,7 @@ enum PhotoMarkerDrawing {
             var v = CGVector(dx: tip.x - c.x, dy: tip.y - c.y)
             let l = max(sqrt(v.dx * v.dx + v.dy * v.dy), 0.001)
             v = CGVector(dx: v.dx / l, dy: v.dy / l)
-            let len: CGFloat = 24
+            let len: CGFloat = r * 3.4
             let half: CGFloat = 0.5   // circa ±29°
             func rot(_ a: CGFloat) -> CGPoint {
                 CGPoint(x: c.x + (v.dx * cos(a) - v.dy * sin(a)) * len, y: c.y + (v.dx * sin(a) + v.dy * cos(a)) * len)
@@ -194,7 +228,7 @@ enum PhotoMarkerDrawing {
             if let w = m.width { parts.append("L \(Fmt.m(w))") }
             if let h = m.height { parts.append("H \(Fmt.m(h))") }
             let text = "\(m.number): " + parts.joined(separator: " × ")
-            let attr: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 7), .foregroundColor: blue]
+            let attr: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: max(4.5, fontSize)), .foregroundColor: blue]
             let str = NSAttributedString(string: text, attributes: attr)
             let sz = str.size()
             let box = CGRect(x: labelPoint.x - sz.width / 2 - 2, y: labelPoint.y - sz.height / 2 - 1,
@@ -207,18 +241,33 @@ enum PhotoMarkerDrawing {
         }
 
         // 3. Pallini numerati ad alto contrasto (contorno scuro + bordo bianco + rosso)
-        for m in markers {
-            let c = toPage(m.point)
-            let r: CGFloat = 7
+        for (i, m) in markers.enumerated() {
+            let p = toPage(m.point)
+            let c = centers[i]
+            if hypot(c.x - p.x, c.y - p.y) > 0.5 {
+                cg.saveGState()
+                cg.setStrokeColor(UIColor.black.withAlphaComponent(0.7).cgColor)
+                cg.setLineWidth(0.4)
+                cg.move(to: p)
+                cg.addLine(to: c)
+                cg.strokePath()
+                cg.setFillColor(UIColor.white.cgColor)
+                cg.fillEllipse(in: CGRect(x: p.x - 1.6, y: p.y - 1.6, width: 3.2, height: 3.2))
+                cg.setFillColor(red.cgColor)
+                cg.fillEllipse(in: CGRect(x: p.x - 1.1, y: p.y - 1.1, width: 2.2, height: 2.2))
+                cg.restoreGState()
+            }
+            let ring = max(0.6, r * 0.2)
             cg.saveGState()
             cg.setFillColor(UIColor.black.withAlphaComponent(0.75).cgColor)
-            cg.fillEllipse(in: CGRect(x: c.x - r - 1.8, y: c.y - r - 1.8, width: 2 * r + 3.6, height: 2 * r + 3.6))
+            cg.fillEllipse(in: CGRect(x: c.x - r - ring - 0.4, y: c.y - r - ring - 0.4,
+                                      width: 2 * (r + ring + 0.4), height: 2 * (r + ring + 0.4)))
             cg.setFillColor(UIColor.white.cgColor)
-            cg.fillEllipse(in: CGRect(x: c.x - r - 1.3, y: c.y - r - 1.3, width: 2 * r + 2.6, height: 2 * r + 2.6))
+            cg.fillEllipse(in: CGRect(x: c.x - r - ring, y: c.y - r - ring, width: 2 * (r + ring), height: 2 * (r + ring)))
             cg.setFillColor(red.cgColor)
             cg.fillEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
             cg.restoreGState()
-            PlanPDF.drawCentered("\(m.number)", at: c, angle: 0, size: 7, bold: true, color: .white, in: cg)
+            PlanPDF.drawCentered("\(m.number)", at: c, angle: 0, size: fontSize, bold: true, color: .white, in: cg)
         }
     }
 }
