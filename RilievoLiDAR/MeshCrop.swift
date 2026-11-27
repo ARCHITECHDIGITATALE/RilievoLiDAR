@@ -54,6 +54,8 @@ extension MeshGeometry {
         var nv: [SIMD3<Float>] = []
         var nc: [SIMD3<Float>] = []
         var ni: [UInt32] = []
+        var nk: [UInt8] = []
+        let hasClasses = classes.count == indices.count / 3
         let hasColors = colors.count == vertices.count
         var t = 0
         while t + 2 < indices.count {
@@ -61,6 +63,7 @@ extension MeshGeometry {
             t += 3
             let centroid = (vertices[tri[0]] + vertices[tri[1]] + vertices[tri[2]]) / 3
             if box.contains(centroid) != box.keepInside { continue }
+            if hasClasses { nk.append(classes[t / 3 - 1]) }
             for i in tri {
                 if remap[i] < 0 {
                     remap[i] = Int32(nv.count)
@@ -70,7 +73,7 @@ extension MeshGeometry {
                 ni.append(UInt32(remap[i]))
             }
         }
-        return MeshGeometry(vertices: nv, colors: nc, indices: ni)
+        return MeshGeometry(vertices: nv, colors: nc, indices: ni, classes: nk)
     }
 
     /// Geometria con i colori delle foto (come l'anteprima salvata).

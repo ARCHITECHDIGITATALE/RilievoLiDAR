@@ -47,6 +47,8 @@ enum MeshExporter {
         let exportDir = folder.appendingPathComponent("export", isDirectory: true)
         try FileManager.default.createDirectory(at: exportDir, withIntermediateDirectories: true)
 
+        // Classi ARKit della mesh originale (per riportarle sulla mesh finale)
+        let classIndex = FaceClassIndex(mesh)
         progress(0.01, "Pulizia della mesh…")
         // La mesh di ARKit è già levigata: rifinitura leggera e solo buchi piccoli.
         // Sulla mesh di ARKit si tengono anche i pezzetti piccoli (vetri smerigliati) e i bordi.
@@ -395,6 +397,7 @@ enum MeshExporter {
 
         // 6. Anteprima per l'app
         progress(0.96, "Preparazione dell'anteprima 3D…")
+        MeshClass.save(classIndex?.classify(vertices: V, indices: I, floorY: floorY) ?? [], meshFolder: folder)
         writePreview(vertices: V, indices: I, colors: colors,
                      to: folder.appendingPathComponent("preview.scn"))
 

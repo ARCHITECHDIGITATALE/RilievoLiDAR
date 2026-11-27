@@ -66,6 +66,8 @@ struct MeshGeometry {
     var vertices: [SIMD3<Float>]
     var colors: [SIMD3<Float>]
     var indices: [UInt32]
+    /// Classe ARKit per faccia (vuoto se non disponibile).
+    var classes: [UInt8] = []
 
     static func load(from scene: SCNScene) -> MeshGeometry? {
         var found: SCNGeometry?

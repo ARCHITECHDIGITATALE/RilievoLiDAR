@@ -9,6 +9,8 @@ import Metal
 struct MeshData {
     var vertices: [SIMD3<Float>] = []
     var indices: [UInt32] = []
+    /// Classe ARKit di ogni faccia (muro, pavimento, porta, finestra…); vuoto se non disponibile.
+    var faceClasses: [UInt8] = []
 
     static func from(_ anchors: [ARMeshAnchor]) -> MeshData {
         var mesh = MeshData()
@@ -38,7 +40,10 @@ struct MeshData {
                 }
                 mesh.indices.append(offset + index)
             }
+            let cls = MeshClass.read(geometry)
+            mesh.faceClasses += cls.count == faces.count ? cls : [UInt8](repeating: 0, count: faces.count)
         }
+        if !mesh.faceClasses.contains(where: { $0 != 0 }) { mesh.faceClasses = [] }
         return mesh
     }
 }
@@ -95,7 +100,9 @@ final class MeshScanner: NSObject, ObservableObject, ARSessionDelegate {
     static func makeConfiguration() -> ARWorldTrackingConfiguration {
         let config = ARWorldTrackingConfiguration()
         if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
-            config.sceneReconstruction = .mesh
+            // Con la classificazione ARKit riconosce muri, pavimento, porte, finestre e arredi
+            config.sceneReconstruction = ARWorldTrackingConfiguration.supportsSceneReconstruction(.meshWithClassification)
+                ? .meshWithClassification : .mesh
         }
         if ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) {
             config.frameSemantics.insert(.sceneDepth)

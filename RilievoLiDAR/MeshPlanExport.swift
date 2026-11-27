@@ -27,6 +27,7 @@ enum MeshPlanExport {
               var g = MeshGeometry.load(from: scene) else {
             throw ExportError("Mesh non trovata: esegui prima una scansione mesh.")
         }
+        g.classes = MeshClass.load(meshFolder: meshFolder, faceCount: g.indices.count / 3)
         if let box = CropBox.load(meshFolder) {
             let cropped = g.cropped(box)
             if !cropped.isEmpty { g = cropped }
@@ -83,7 +84,8 @@ enum MeshPlanExport {
     // MARK: DXF
 
     static func dxf(segments: [(SIMD3<Float>, SIMD3<Float>)], annotations: SavedAnnotations,
-                    keyframes: [KeyframeRecord]) -> String {
+                    keyframes: [KeyframeRecord], furniture: [(SIMD3<Float>, SIMD3<Float>)] = [],
+                    openings: [MeshOpening] = []) -> String {
         let scale = annotations.scale
         var s = "0\nSECTION\n2\nENTITIES\n"
         func f(_ v: Float) -> String { String(format: "%.4f", v) }
@@ -94,6 +96,12 @@ enum MeshPlanExport {
             s += "0\nTEXT\n8\n\(layer)\n10\n\(f(p.x))\n20\n\(f(p.y))\n30\n0.0\n40\n0.08\n1\n\(PlanDXF.ascii(t))\n"
         }
         for seg in segments { line(plan(seg.0, scale), plan(seg.1, scale), "SEZIONE") }
+        for seg in furniture { line(plan(seg.0, scale), plan(seg.1, scale), "ARREDI") }
+        for o in openings {
+            let layer = o.isDoor ? "PORTE" : "FINESTRE"
+            line(o.a, o.b, layer)
+            text(o.label, (o.a + o.b) / 2, layer)
+        }
         for (i, m) in annotations.measures.enumerated() {
             let p = m.vectors.map { plan($0, scale) }
             if p.count > 1 {
@@ -114,7 +122,8 @@ enum MeshPlanExport {
     }
 
     static func dxf(_ d: Loaded) -> String {
-        dxf(segments: d.geometry.section(at: d.sectionY), annotations: d.annotations, keyframes: d.keyframes)
+        dxf(segments: wallSection(d), annotations: d.annotations, keyframes: d.keyframes,
+            furniture: furnitureSection(d), openings: openings(d))
     }
 
     // MARK: CSV
@@ -135,6 +144,9 @@ enum MeshPlanExport {
             let text = n.text.replacingOccurrences(of: ";", with: ",")
             csv += "Nota;\(i + 1);\(text);\(Fmt.m(n.point[0])) \(Fmt.m(n.point[1])) \(Fmt.m(n.point[2]))\n"
         }
+        for (i, o) in openings(d).enumerated() {
+            csv += "\(o.isDoor ? "Porta" : "Finestra");\(i + 1);\(o.label) m;\n"
+        }
         if d.annotations.measures.isEmpty {
             csv += "Nota;;Per altre misure usa Righello e Area nel visualizzatore della mesh;\n"
         }
@@ -146,7 +158,9 @@ enum MeshPlanExport {
 
     static func pdf(_ d: Loaded, projectName: String, photos: [(number: Int, record: PhotoRecord)],
                     projectFolder: URL, showFloor: Bool = false, to url: URL) throws {
-        let segments = d.geometry.section(at: d.sectionY)
+        let segments = wallSection(d)
+        let furniture = furnitureSection(d)
+        let found = openings(d)
         let scale = d.scale
         let page = PlanPDF.page
         let renderer = UIGraphicsPDFRenderer(bounds: page)
@@ -201,7 +215,20 @@ enum MeshPlanExport {
                 cg.restoreGState()
             }
 
-            // Sezione della mesh
+            // Arredi (sedie, tavoli) in grigio chiaro
+            if !furniture.isEmpty {
+                cg.saveGState()
+                cg.setStrokeColor(UIColor(white: 0.6, alpha: 1).cgColor)
+                cg.setLineWidth(0.6)
+                for sg in furniture {
+                    cg.move(to: toPage(plan(sg.0, scale)))
+                    cg.addLine(to: toPage(plan(sg.1, scale)))
+                }
+                cg.strokePath()
+                cg.restoreGState()
+            }
+
+            // Sezione della mesh (solo muri, se la classificazione è disponibile)
             cg.saveGState()
             cg.setStrokeColor(UIColor.black.cgColor)
             cg.setLineWidth(1.2)
@@ -212,6 +239,9 @@ enum MeshPlanExport {
             }
             cg.strokePath()
             cg.restoreGState()
+
+            // Porte e finestre riconosciute
+            drawOpenings(found, toPage: toPage, in: cg)
 
             // Percorso dell'operatore
             if d.keyframes.count > 1 {
@@ -269,7 +299,8 @@ enum MeshPlanExport {
             cg.restoreGState()
             PlanPDF.drawText("\(Int(meters)) m", at: CGPoint(x: 56 + meters * k, y: barY - 6), size: 8)
             PlanPDF.drawLegend(cg, at: CGPoint(x: 200, y: barY), items: [
-                (.line, "sezione della mesh"),
+                (.line, "muri"),
+                (.text("P / F"), "porta / finestra"),
                 (.photo, "foto e direzione di ripresa"),
                 (.blueLine, "misure delle note"),
                 (.text("N"), "nota"),
@@ -285,6 +316,26 @@ enum MeshPlanExport {
             cur.line("Ingombro in pianta \(Fmt.m(size.x)) × \(Fmt.m(size.z)) m   –   Altezza \(Fmt.m((d.maxP.y - d.floorY) * scale)) m",
                      size: 10)
             cur.space(8)
+            let doors = found.filter { $0.isDoor }
+            let windows = found.filter { !$0.isDoor }
+            if !doors.isEmpty {
+                cur.row(["Porta", "Larghezza (m)", "Altezza (m)"], widths: [120, 120, 120], bold: true)
+                for (i, o) in doors.enumerated() {
+                    cur.row(["\(i + 1)", Fmt.m(o.width), Fmt.m(o.height)], widths: [120, 120, 120])
+                }
+                cur.space(6)
+            }
+            if !windows.isEmpty {
+                cur.row(["Finestra", "Larghezza (m)", "Altezza (m)", "Parapetto (m)"], widths: [120, 120, 120, 120], bold: true)
+                for (i, o) in windows.enumerated() {
+                    cur.row(["\(i + 1)", Fmt.m(o.width), Fmt.m(o.height), Fmt.m(o.bottom)], widths: [120, 120, 120, 120])
+                }
+                cur.space(6)
+            }
+            if !found.isEmpty {
+                cur.line("Porte e finestre riconosciute automaticamente dalla mesh: misure indicative, da verificare.", size: 8)
+                cur.space(6)
+            }
             if d.annotations.measures.isEmpty {
                 cur.line("Nessuna misura salvata: usa Righello e Area in \"Visualizza, misura, sezione e tour\".", size: 9)
             } else {
