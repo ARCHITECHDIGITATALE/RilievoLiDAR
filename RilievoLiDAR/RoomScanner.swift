@@ -107,6 +107,10 @@ struct RoomScanView: View {
     @State private var noteText = ""
     @State private var widthText = ""
     @State private var heightText = ""
+    @State private var roomText = ""
+    @State private var levelText = ""
+    @AppStorage("lastPhotoRoom") private var lastRoom = ""
+    @AppStorage("lastPhotoLevel") private var lastLevel = ""
     @State private var pendingPhotoID: UUID?
     @State private var flash = false
 
@@ -164,6 +168,7 @@ struct RoomScanView: View {
         }
         .sheet(isPresented: $showNote) {
             PhotoNoteForm(note: $noteText, width: $widthText, height: $heightText,
+                          room: $roomText, level: $levelText,
                           message: "RoomPlan non si può mettere in pausa: tieni l'iPad fermo mentre scrivi, oppure salta e completa la nota dopo dalla galleria.",
                           onSave: { saveNote() }, onSkip: {})
         }
@@ -230,6 +235,8 @@ struct RoomScanView: View {
         pendingPhotoID = record.id
         noteText = ""
         widthText = ""
+        roomText = lastRoom
+        levelText = lastLevel
         heightText = ""
         showNote = true
     }
@@ -239,11 +246,17 @@ struct RoomScanView: View {
         let text = noteText
         let w = PhotoAim.parseMeters(widthText)
         let h = PhotoAim.parseMeters(heightText)
+        let room = roomText.trimmingCharacters(in: .whitespaces)
+        let level = levelText.trimmingCharacters(in: .whitespaces)
+        lastRoom = room
+        lastLevel = level
         store.update(projectID) { p in
             if let i = p.photos.firstIndex(where: { $0.id == id }) {
                 p.photos[i].note = text
                 p.photos[i].width = w
                 p.photos[i].height = h
+                p.photos[i].room = room.isEmpty ? nil : room
+                p.photos[i].level = level.isEmpty ? nil : level
             }
         }
     }

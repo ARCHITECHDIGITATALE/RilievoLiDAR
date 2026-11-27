@@ -194,6 +194,7 @@ enum PlanPDF {
             ctx.beginPage()
             let cursor = PDFCursor(ctx)
             drawTables(cursor, title: projectName, rooms: rooms)
+            drawPhotoTable(cursor, photos: photos)
 
             drawPhotos(ctx, photos: photos, folder: projectFolder)
         }
@@ -330,8 +331,12 @@ enum PlanPDF {
         cg.strokePath()
         cg.restoreGState()
         drawText("\(Int(meters)) m", at: CGPoint(x: 56 + meters * s, y: barY - 6), size: 8)
-        drawText("P = porta   F = finestra (p. = parapetto)   A = apertura   ● = foto con direzione di ripresa   blu = misure delle note   - - - = percorso",
-                 at: CGPoint(x: 200, y: barY - 6), size: 7, color: .darkGray)
+        drawLegend(cg, at: CGPoint(x: 200, y: barY), items: [
+            (.text("P / F / A"), "porta / finestra / apertura"),
+            (.photo, "foto e direzione di ripresa"),
+            (.blueLine, "misure delle note"),
+            (.dashed, "percorso di scansione")
+        ])
     }
 
     static func drawTables(_ cur: PDFCursor, title: String, rooms: [RoomPlanData]) {
@@ -386,6 +391,85 @@ enum PlanPDF {
         }
     }
 
+    enum LegendSymbol {
+        case line, dashed, photo, blueLine, text(String)
+    }
+
+    /// Legenda con i simboli disegnati (non caratteri speciali, che alcuni lettori PDF non mostrano).
+    static func drawLegend(_ cg: CGContext, at origin: CGPoint, items: [(LegendSymbol, String)]) {
+        var x = origin.x
+        let y = origin.y
+        for (symbol, label) in items {
+            cg.saveGState()
+            switch symbol {
+            case .line:
+                cg.setStrokeColor(UIColor.black.cgColor)
+                cg.setLineWidth(1.5)
+                cg.move(to: CGPoint(x: x, y: y))
+                cg.addLine(to: CGPoint(x: x + 16, y: y))
+                cg.strokePath()
+                x += 20
+            case .dashed:
+                cg.setStrokeColor(UIColor.systemOrange.cgColor)
+                cg.setLineWidth(1)
+                cg.setLineDash(phase: 0, lengths: [3, 2])
+                cg.move(to: CGPoint(x: x, y: y))
+                cg.addLine(to: CGPoint(x: x + 16, y: y))
+                cg.strokePath()
+                x += 20
+            case .blueLine:
+                cg.setStrokeColor(PhotoMarkerDrawing.blue.cgColor)
+                cg.setLineWidth(1.3)
+                cg.move(to: CGPoint(x: x, y: y))
+                cg.addLine(to: CGPoint(x: x + 16, y: y))
+                cg.move(to: CGPoint(x: x, y: y - 3))
+                cg.addLine(to: CGPoint(x: x, y: y + 3))
+                cg.move(to: CGPoint(x: x + 16, y: y - 3))
+                cg.addLine(to: CGPoint(x: x + 16, y: y + 3))
+                cg.strokePath()
+                x += 20
+            case .photo:
+                cg.move(to: CGPoint(x: x + 4, y: y))
+                cg.addLine(to: CGPoint(x: x + 16, y: y - 5))
+                cg.addLine(to: CGPoint(x: x + 16, y: y + 5))
+                cg.closePath()
+                cg.setFillColor(PhotoMarkerDrawing.red.withAlphaComponent(0.3).cgColor)
+                cg.setStrokeColor(PhotoMarkerDrawing.red.cgColor)
+                cg.setLineWidth(0.6)
+                cg.drawPath(using: .fillStroke)
+                cg.setFillColor(PhotoMarkerDrawing.red.cgColor)
+                cg.fillEllipse(in: CGRect(x: x, y: y - 4, width: 8, height: 8))
+                x += 20
+            case .text(let t):
+                let attr: [NSAttributedString.Key: Any] = [.font: font(7, bold: true), .foregroundColor: UIColor.black]
+                let str = NSAttributedString(string: t, attributes: attr)
+                str.draw(at: CGPoint(x: x, y: y - 5))
+                x += str.size().width + 4
+            }
+            cg.restoreGState()
+            let attr: [NSAttributedString.Key: Any] = [.font: font(7, bold: false), .foregroundColor: UIColor.darkGray]
+            let str = NSAttributedString(string: label, attributes: attr)
+            str.draw(at: CGPoint(x: x, y: y - 5))
+            x += str.size().width + 16
+        }
+    }
+
+    /// Tabella delle foto con vano, piano, misure e nota.
+    static func drawPhotoTable(_ cur: PDFCursor, photos: [(number: Int, record: PhotoRecord)]) {
+        let rows = photos.filter { $0.record.placeText != nil || $0.record.measuresText != nil || !$0.record.note.isEmpty }
+        guard !rows.isEmpty else { return }
+        cur.space(10)
+        cur.line("Foto con nota", size: 12, bold: true)
+        let widths: [CGFloat] = [36, 120, 70, 140, 380]
+        cur.row(["Foto", "Vano", "Piano", "Misure", "Nota"], widths: widths, bold: true)
+        for item in rows {
+            let r = item.record
+            let note = r.note.replacingOccurrences(of: "\n", with: " ")
+            cur.row(["\(item.number)", r.room ?? "", r.level ?? "", r.measuresText ?? "", String(note.prefix(70))],
+                    widths: widths)
+        }
+    }
+
     static func drawPhotos(_ ctx: UIGraphicsPDFRendererContext, photos: [(number: Int, record: PhotoRecord)], folder: URL) {
         guard !photos.isEmpty else { return }
         let colWidth: CGFloat = 360
@@ -404,7 +488,9 @@ enum PlanPDF {
                 let h = image.size.height * scale
                 image.draw(in: CGRect(x: x + (colWidth - w) / 2, y: y, width: w, height: h))
             }
-            drawText("Foto \(item.number) – \(Fmt.date(item.record.date))", at: CGPoint(x: x, y: y + imageBox + 8),
+            var title = "Foto \(item.number)"
+            if let place = item.record.placeText { title += " – \(place)" }
+            drawText(title + " – \(Fmt.date(item.record.date))", at: CGPoint(x: x, y: y + imageBox + 8),
                      size: 9, bold: true)
             var note = item.record.note.isEmpty ? "(nessuna nota)" : item.record.note
             if let m = item.record.measuresText { note = m + "\n" + note }

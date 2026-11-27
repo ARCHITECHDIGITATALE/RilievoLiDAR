@@ -24,6 +24,8 @@ struct PhotoRecord: Codable, Identifiable, Hashable {
     var target: [Float]?      // punto inquadrato al centro della foto x, y, z (se c'è la profondità)
     var width: Float?         // larghezza misurata scritta nella nota (metri)
     var height: Float?        // altezza misurata scritta nella nota (metri)
+    var room: String?         // vano (es. Cucina)
+    var level: String?        // piano (es. Terra, 1°)
 }
 
 struct MeshInfo: Codable, Hashable {

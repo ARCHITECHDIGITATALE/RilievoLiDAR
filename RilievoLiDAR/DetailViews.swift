@@ -89,6 +89,8 @@ struct PhotoDetailView: View {
     @State private var note = ""
     @State private var widthText = ""
     @State private var heightText = ""
+    @State private var roomText = ""
+    @State private var levelText = ""
     @State private var image: UIImage?
     @State private var confirmDelete = false
 
@@ -105,6 +107,15 @@ struct PhotoDetailView: View {
                     Text(Fmt.date(photo.date))
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    HStack(spacing: 12) {
+                        Text("Vano")
+                        TextField("es. Cucina", text: $roomText)
+                            .textFieldStyle(.roundedBorder)
+                        Text("Piano")
+                        TextField("es. Terra", text: $levelText)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 140)
+                    }
                     TextField("Nota", text: $note, axis: .vertical)
                         .textFieldStyle(.roundedBorder)
                         .lineLimit(3...8)
@@ -158,6 +169,8 @@ struct PhotoDetailView: View {
                 note = photo.note
                 widthText = PhotoAim.text(photo.width)
                 heightText = PhotoAim.text(photo.height)
+                roomText = photo.room ?? ""
+                levelText = photo.level ?? ""
                 image = UIImage(contentsOfFile: store.folder(for: projectID).appendingPathComponent(photo.file).path)
             }
         }
@@ -168,11 +181,15 @@ struct PhotoDetailView: View {
         let id = photo.id
         let w = PhotoAim.parseMeters(widthText)
         let h = PhotoAim.parseMeters(heightText)
+        let room = roomText.trimmingCharacters(in: .whitespaces)
+        let level = levelText.trimmingCharacters(in: .whitespaces)
         store.update(projectID) { p in
             if let i = p.photos.firstIndex(where: { $0.id == id }) {
                 p.photos[i].note = text
                 p.photos[i].width = w
                 p.photos[i].height = h
+                p.photos[i].room = room.isEmpty ? nil : room
+                p.photos[i].level = level.isEmpty ? nil : level
             }
         }
     }

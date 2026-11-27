@@ -268,8 +268,13 @@ enum MeshPlanExport {
             cg.strokePath()
             cg.restoreGState()
             PlanPDF.drawText("\(Int(meters)) m", at: CGPoint(x: 56 + meters * k, y: barY - 6), size: 8)
-            PlanPDF.drawText("— = sezione della mesh   ● = foto con direzione di ripresa   blu = misure delle note   N = nota   - - - = percorso",
-                             at: CGPoint(x: 200, y: barY - 6), size: 7, color: .darkGray)
+            PlanPDF.drawLegend(cg, at: CGPoint(x: 200, y: barY), items: [
+                (.line, "sezione della mesh"),
+                (.photo, "foto e direzione di ripresa"),
+                (.blueLine, "misure delle note"),
+                (.text("N"), "nota"),
+                (.dashed, "percorso di scansione")
+            ])
 
             // Tabella
             ctx.beginPage()
@@ -296,16 +301,7 @@ enum MeshPlanExport {
                     cur.row(["N\(i + 1)", n.text], widths: [40, 580])
                 }
             }
-            let measured = photos.filter { $0.record.measuresText != nil }
-            if !measured.isEmpty {
-                cur.space(10)
-                cur.row(["Foto", "Misure", "Nota"], widths: [40, 160, 420], bold: true)
-                for item in measured {
-                    let note = item.record.note.replacingOccurrences(of: "\n", with: " ")
-                    cur.row(["\(item.number)", item.record.measuresText ?? "", String(note.prefix(80))],
-                            widths: [40, 160, 420])
-                }
-            }
+            PlanPDF.drawPhotoTable(cur, photos: photos)
             if scale != 1 {
                 cur.space(10)
                 cur.line("Scala calibrata: \(String(format: "%.4f", scale))", size: 9)

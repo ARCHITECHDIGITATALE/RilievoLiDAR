@@ -426,6 +426,10 @@ struct MeshScanView: View {
     @State private var noteText = ""
     @State private var widthText = ""
     @State private var heightText = ""
+    @State private var roomText = ""
+    @State private var levelText = ""
+    @AppStorage("lastPhotoRoom") private var lastRoom = ""
+    @AppStorage("lastPhotoLevel") private var lastLevel = ""
     @State private var pendingPhotoID: UUID?
 
     var body: some View {
@@ -471,6 +475,7 @@ struct MeshScanView: View {
         }
         .sheet(isPresented: $showNote, onDismiss: { scanner.paused = false }) {
             PhotoNoteForm(note: $noteText, width: $widthText, height: $heightText,
+                          room: $roomText, level: $levelText,
                           message: "La registrazione è in pausa: riprende quando chiudi la nota.",
                           onSave: { saveNote() }, onSkip: {})
         }
@@ -559,6 +564,8 @@ struct MeshScanView: View {
         pendingPhotoID = record.id
         noteText = ""
         widthText = ""
+        roomText = lastRoom
+        levelText = lastLevel
         heightText = ""
         showNote = true
     }
@@ -568,11 +575,17 @@ struct MeshScanView: View {
         let text = noteText
         let w = PhotoAim.parseMeters(widthText)
         let h = PhotoAim.parseMeters(heightText)
+        let room = roomText.trimmingCharacters(in: .whitespaces)
+        let level = levelText.trimmingCharacters(in: .whitespaces)
+        lastRoom = room
+        lastLevel = level
         store.update(projectID) { p in
             if let i = p.photos.firstIndex(where: { $0.id == id }) {
                 p.photos[i].note = text
                 p.photos[i].width = w
                 p.photos[i].height = h
+                p.photos[i].room = room.isEmpty ? nil : room
+                p.photos[i].level = level.isEmpty ? nil : level
             }
         }
     }

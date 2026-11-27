@@ -41,6 +41,23 @@ enum PhotoAim {
 }
 
 extension PhotoRecord {
+    /// "Cucina · piano 1°" (vuoto se non indicati).
+    var placeText: String? {
+        let r = (room ?? "").trimmingCharacters(in: .whitespaces)
+        let l = (level ?? "").trimmingCharacters(in: .whitespaces)
+        switch (r.isEmpty, l.isEmpty) {
+        case (false, false): return "\(r) · piano \(l)"
+        case (false, true): return r
+        case (true, false): return "Piano \(l)"
+        default: return nil
+        }
+    }
+
+    /// Testo breve per la galleria: vano e nota.
+    var caption: String {
+        [placeText, note.isEmpty ? nil : note].compactMap { $0 }.joined(separator: " – ")
+    }
+
     /// "L 3,20 × H 2,70" se la foto ha misure.
     var measuresText: String? {
         switch (width, height) {
@@ -212,6 +229,8 @@ struct PhotoNoteForm: View {
     @Binding var note: String
     @Binding var width: String
     @Binding var height: String
+    @Binding var room: String
+    @Binding var level: String
     let message: String
     let onSave: () -> Void
     let onSkip: () -> Void
@@ -220,6 +239,22 @@ struct PhotoNoteForm: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    HStack {
+                        Text("Vano")
+                        TextField("es. Cucina", text: $room)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    HStack {
+                        Text("Piano")
+                        TextField("es. Terra, 1°", text: $level)
+                            .multilineTextAlignment(.trailing)
+                    }
+                } header: {
+                    Text("Dove")
+                } footer: {
+                    Text("Vano e piano restano proposti per le foto successive.")
+                }
                 Section {
                     TextField("Nota (es. parete nord, finestra bagno…)", text: $note, axis: .vertical)
                         .lineLimit(3...8)

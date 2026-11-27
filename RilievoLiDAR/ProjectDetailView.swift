@@ -193,7 +193,7 @@ struct ProjectDetailView: View {
                             selectedPhoto = PhotoSelection(photo: photo, number: index + 1)
                         } label: {
                             PhotoThumb(url: folder.appendingPathComponent(photo.thumbFile),
-                                       number: index + 1, note: photo.note)
+                                       number: index + 1, note: photo.caption)
                         }
                         .buttonStyle(.plain)
                     }
