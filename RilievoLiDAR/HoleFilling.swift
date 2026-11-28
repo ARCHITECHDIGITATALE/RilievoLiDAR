@@ -8,7 +8,7 @@ extension MeshCleanup {
     /// maxPerimeter in metri; maxDeviation = quanto il contorno può scostarsi da un piano (aperture vere e
     /// bordi esterni non sono piani, quindi non vengono chiusi).
     static func fillHoles(_ vertices: inout [SIMD3<Float>], _ indices: inout [UInt32],
-                          maxPerimeter: Float, maxDeviation: Float, maxLoop: Int = 1500) {
+                          maxPerimeter: Float, maxDeviation: Float, floorY: Float? = nil, maxLoop: Int = 1500) {
         let use = edgeUse(indices)
         // Lati di bordo orientati; un vertice può averne più d'uno (contorni irregolari).
         var next = [UInt32: [UInt32]]()
@@ -66,6 +66,19 @@ extension MeshCleanup {
             var deviation: Float = 0
             for p in pts { deviation = max(deviation, abs(simd_dot(p - center, normal))) }
             if deviation > maxDeviation && loop.count > 12 { continue }
+
+            // Aperture verticali che toccano il pavimento o alte più di 1,6 m sono porte e passaggi:
+            // restano aperte. Le finestre (con parapetto) si chiudono.
+            if abs(normal.y) < 0.5 {
+                var minY = Float.greatestFiniteMagnitude
+                var maxY = -Float.greatestFiniteMagnitude
+                for p in pts {
+                    minY = min(minY, p.y)
+                    maxY = max(maxY, p.y)
+                }
+                if maxY - minY > 1.6 { continue }
+                if let fy = floorY, minY - fy < 0.2 { continue }
+            }
 
             // Coordinate 2D nel piano, con u × v = normale (il contorno risulta antiorario)
             let helper: SIMD3<Float> = abs(normal.x) < 0.9 ? SIMD3<Float>(1, 0, 0) : SIMD3<Float>(0, 1, 0)

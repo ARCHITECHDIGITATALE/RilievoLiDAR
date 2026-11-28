@@ -54,7 +54,7 @@ enum MeshExporter {
         // Sulla mesh di ARKit si tengono anche i pezzetti piccoli (vetri smerigliati) e i bordi.
         let refined = MeshCleanup.refine(MeshCleanup.clean(mesh, minComponentFaces: fused ? 40 : 6),
                                          smoothIterations: fused ? 8 : 2,
-                                         maxHolePerimeter: fused ? 3 : 7,
+                                         maxHolePerimeter: fused ? 3 : 5,
                                          fringePasses: fused ? 2 : 0)
         // Pavimento sotto i mobili (dove il LiDAR non vede)
         let (withFloor, floorY) = MeshCleanup.fillFloor(refined)

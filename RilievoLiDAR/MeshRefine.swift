@@ -13,7 +13,8 @@ extension MeshCleanup {
                        fringePasses: Int = 2) -> MeshData {
         var indices = fringePasses > 0 ? removeFringe(mesh.indices, passes: fringePasses) : mesh.indices
         var vertices = mesh.vertices
-        fillHoles(&vertices, &indices, maxPerimeter: maxHolePerimeter, maxDeviation: 0.15)
+        let floorY = MeshPlanExport.floorY(vertices, fallback: vertices.map { $0.y }.min() ?? 0)
+        fillHoles(&vertices, &indices, maxPerimeter: maxHolePerimeter, maxDeviation: 0.15, floorY: floorY)
         vertices = taubinSmooth(vertices, indices, iterations: smoothIterations)
         return compact(vertices, indices)
     }

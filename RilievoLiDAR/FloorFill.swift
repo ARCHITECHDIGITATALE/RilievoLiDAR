@@ -136,6 +136,29 @@ extension MeshCleanup {
             filledCount += 1
         }
         guard filledCount > 0 else { return (mesh, floorY) }
+
+        // Solo buchi piccoli (sotto sedie, tavoli, scatole): le zone grandi mai riprese restano aperte
+        let maxCells = Int(1.5 / (cell * cell))
+        var seen = [Bool](repeating: false, count: w * h)
+        for start in 0..<(w * h) where fill[start] && !seen[start] {
+            var component: [Int] = []
+            var stack = [start]
+            seen[start] = true
+            while let i = stack.popLast() {
+                component.append(i)
+                let x = i % w, z = i / w
+                for n in [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, z > 0 ? i - w : -1, z < h - 1 ? i + w : -1]
+                where n >= 0 && fill[n] && !seen[n] {
+                    seen[n] = true
+                    stack.append(n)
+                }
+            }
+            if component.count > maxCells {
+                for i in component { fill[i] = false }
+                filledCount -= component.count
+            }
+        }
+        guard filledCount > 0 else { return (mesh, floorY) }
         // Un giro di celle di sovrapposizione col pavimento esistente: niente fessure ai bordi
         var grown = fill
         for z in 1..<(h - 1) {
