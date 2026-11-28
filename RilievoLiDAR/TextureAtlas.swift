@@ -137,7 +137,7 @@ enum MeshCleanup {
 
 enum TextureAtlas {
     static let pageSize = 4096
-    static let maxPages = 4
+    static let maxPages = 6
     static let pad: CGFloat = 4
 
     struct Result {

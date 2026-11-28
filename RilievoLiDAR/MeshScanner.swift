@@ -148,32 +148,36 @@ final class MeshScanner: NSObject, ObservableObject, ARSessionDelegate {
     }
 
     /// Blocca (o sblocca) esposizione e bilanciamento del bianco della fotocamera usata da ARKit.
+    /// Fotocamera durante la scansione: bilanciamento del bianco bloccato (colori costanti),
+    /// esposizione automatica ma con tempo di scatto massimo 1/100 s (foto non mosse) e leggermente
+    /// scurita per non bruciare finestre e pavimenti al sole. Le differenze di luminosità tra le foto
+    /// vengono compensate durante l'elaborazione.
     static func lockCamera(_ lock: Bool) {
         guard let device = ARWorldTrackingConfiguration.configurableCaptureDeviceForPrimaryCamera else { return }
         do {
             try device.lockForConfiguration()
             defer { device.unlockForConfiguration() }
             if lock {
-                // Tempo di scatto breve (foto nitide anche muovendosi) compensato con la sensibilità
-                let target = CMTime(value: 1, timescale: 120)
-                let current = device.exposureDuration
-                if device.isExposureModeSupported(.custom), current.seconds > target.seconds,
-                   target >= device.activeFormat.minExposureDuration {
-                    let factor = Float(current.seconds / target.seconds)
-                    let iso = min(max(device.iso * factor, device.activeFormat.minISO), device.activeFormat.maxISO)
-                    device.setExposureModeCustom(duration: target, iso: iso, completionHandler: nil)
-                } else if device.isExposureModeSupported(.locked) {
-                    device.exposureMode = .locked
-                }
                 if device.isWhiteBalanceModeSupported(.locked) { device.whiteBalanceMode = .locked }
+                if device.isExposureModeSupported(.continuousAutoExposure) {
+                    device.exposureMode = .continuousAutoExposure
+                    let maxDuration = CMTime(value: 1, timescale: 100)
+                    if maxDuration >= device.activeFormat.minExposureDuration
+                        && maxDuration <= device.activeFormat.maxExposureDuration {
+                        device.activeMaxExposureDuration = maxDuration
+                    }
+                    device.setExposureTargetBias(max(device.minExposureTargetBias, -0.5), completionHandler: nil)
+                }
             } else {
                 if device.isExposureModeSupported(.continuousAutoExposure) { device.exposureMode = .continuousAutoExposure }
+                device.activeMaxExposureDuration = .invalid
+                device.setExposureTargetBias(0, completionHandler: nil)
                 if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
                     device.whiteBalanceMode = .continuousAutoWhiteBalance
                 }
             }
         } catch {
-            print("Blocco esposizione non riuscito: \(error)")
+            print("Impostazione fotocamera non riuscita: \(error)")
         }
     }
 

@@ -256,7 +256,8 @@ enum MeshExporter {
                 var counted: Float = 0
                 for k in 0..<cams.count where sumOwn[k].x > 1 && sumOwn[k].y > 1 && sumOwn[k].z > 1 {
                     let g = sumRef[k] / sumOwn[k]
-                    gains[k] = simd_clamp(g, SIMD3<Float>(repeating: 0.6), SIMD3<Float>(repeating: 1.6))
+                    // Esposizione automatica: le foto possono differire anche di più di uno stop
+                    gains[k] = simd_clamp(g, SIMD3<Float>(repeating: 0.4), SIMD3<Float>(repeating: 2.5))
                     mean += gains[k]
                     counted += 1
                 }
