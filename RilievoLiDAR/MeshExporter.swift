@@ -126,6 +126,9 @@ enum MeshExporter {
             if len < 1e-10 { continue }
             let n = cr / len
             let centroid = (a + b + c) / 3
+            // Miglior foto scartata solo perché il punto sembrava nascosto: si usa se non c'è altro
+            var occludedBest: Float = 0
+            var occludedCam: Int32 = -1
             for k in 0..<cams.count {
                 let cam = cams[k]
                 let toCam = cam.position - centroid
@@ -135,7 +138,16 @@ enum MeshExporter {
                 if facing < 0.1 { continue }
                 guard let pa = cam.project(a), let pb = cam.project(b), let pc = cam.project(c),
                       let pm = cam.project(centroid) else { continue }
-                if let d = cam.depthAt(u: pm.x, v: pm.y), pm.z - d > 0.08 { continue } // nascosto da altro
+                let hidden: Bool
+                if let d = cam.depthAt(u: pm.x, v: pm.y) { hidden = pm.z - d > max(0.08, 0.04 * pm.z) } else { hidden = false }
+                if hidden {
+                    let s = facing * facing / (dist * dist)
+                    if s > occludedBest {
+                        occludedBest = s
+                        occludedCam = Int32(k)
+                    }
+                    continue
+                }
                 // Preferisce foto vicine, frontali e con il triangolo lontano dai bordi dell'immagine
                 let ux = min(pm.x, cam.width - pm.x) / (cam.width * 0.5)
                 let uy = min(pm.y, cam.height - pm.y) / (cam.height * 0.5)
@@ -159,6 +171,10 @@ enum MeshExporter {
                 }
                 cc[f * K + slot] = Int32(k)
                 cs[f * K + slot] = score
+            }
+            if cc[f * K] < 0 && occludedCam >= 0 {
+                cc[f * K] = occludedCam
+                cs[f * K] = occludedBest * 0.1
             }
         }
         progressLock.lock()

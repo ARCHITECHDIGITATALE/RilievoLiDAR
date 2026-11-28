@@ -115,6 +115,13 @@ final class MeshScanner: NSObject, ObservableObject, ARSessionDelegate {
 
     var currentFrame: ARFrame? { session?.currentFrame }
 
+    /// Foto con nota: ancoraggio per correggere posizione e direzione a fine scansione.
+    private var photoOrigins: [UUID: simd_float4x4] = [:]
+    func addPhotoAnchor(_ id: UUID, transform t: simd_float4x4) {
+        photoOrigins[id] = t
+        session?.add(anchor: ARAnchor(name: "ph_" + id.uuidString, transform: t))
+    }
+
     func start(meshFolder folder: URL) {
         guard let session else { return }
         let fm = FileManager.default
@@ -228,6 +235,9 @@ final class MeshScanner: NSObject, ObservableObject, ARSessionDelegate {
         lastTransform = t
 
         let index = keyframes.count
+        // Ancoraggio nella posizione della foto: ARKit lo sposta insieme alle sue correzioni del
+        // tracciamento, così a fine scansione la posizione della foto coincide con la mesh.
+        session.add(anchor: ARAnchor(name: "kf_\(index)", transform: t))
         let name = String(format: "kf_%04d", index)
 
         var depthPayload: Data? = nil
@@ -351,15 +361,45 @@ final class MeshScanner: NSObject, ObservableObject, ARSessionDelegate {
         phase = .processing
         statusText = "Raccolta della mesh…"
 
-        let anchors = session.currentFrame?.anchors.compactMap { $0 as? ARMeshAnchor } ?? []
+        let allAnchors = session.currentFrame?.anchors ?? []
+        let anchors = allAnchors.compactMap { $0 as? ARMeshAnchor }
         let mesh = MeshData.from(anchors)
+        // Posizioni delle foto corrette da ARKit (ancoraggi "kf_N")
+        var correctedPoses: [Int: simd_float4x4] = [:]
+        var photoDelta: [UUID: simd_float4x4] = [:]
+        for a in allAnchors {
+            guard let name = a.name else { continue }
+            if name.hasPrefix("kf_"), let i = Int(name.dropFirst(3)) { correctedPoses[i] = a.transform }
+            if name.hasPrefix("ph_"), let id = UUID(uuidString: String(name.dropFirst(3))), let orig = photoOrigins[id] {
+                photoDelta[id] = a.transform * orig.inverse
+            }
+        }
+        if !photoDelta.isEmpty {
+            store.update(projectID) { p in
+                for i in p.photos.indices {
+                    guard let d = photoDelta[p.photos[i].id] else { continue }
+                    func move(_ v: [Float]?, w: Float) -> [Float]? {
+                        guard let v, v.count == 3 else { return v }
+                        let r = d * SIMD4<Float>(v[0], v[1], v[2], w)
+                        return [r.x, r.y, r.z]
+                    }
+                    p.photos[i].position = move(p.photos[i].position, w: 1) ?? p.photos[i].position
+                    p.photos[i].direction = move(p.photos[i].direction, w: 0)
+                    p.photos[i].target = move(p.photos[i].target, w: 1)
+                }
+            }
+        }
         MeshScanner.lockCamera(false)
         session.pause()
 
         // Aspetta che l'ultimo fotogramma sia stato scritto su disco.
         ioQueue.async {
             DispatchQueue.main.async {
-                let frames = self.keyframes
+                let frames: [KeyframeRecord] = self.keyframes.map { kf in
+                    var k = kf
+                    if let t = correctedPoses[kf.index] { k.transform = t.floatArray }
+                    return k
+                }
                 let depthFrames = self.depthFrames
                 let startTime = Date()
                 DispatchQueue.global(qos: .userInitiated).async {
@@ -571,6 +611,7 @@ struct MeshScanView: View {
               let record = PhotoSaver.save(frame: frame, projectFolder: store.folder(for: projectID), source: "mesh")
         else { return }
         scanner.paused = true
+        scanner.addPhotoAnchor(record.id, transform: frame.camera.transform)
         store.update(projectID) { $0.photos.append(record) }
         pendingPhotoID = record.id
         noteText = ""
