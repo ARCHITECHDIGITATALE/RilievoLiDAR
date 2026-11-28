@@ -280,6 +280,10 @@ final class MeshViewerModel: ObservableObject {
     }
     @Published var cropError: String?
     @Published var sectionHeight: Float = 0
+    /// Con lo strumento Sezione il modello viene tagliato alla quota scelta (sparisce ciò che sta sopra).
+    @Published var cutModel = true {
+        didSet { applyCut() }
+    }
     @Published var sectionCount = 0
     @Published var tourIndex = 0
     @Published var playing = false
@@ -421,6 +425,36 @@ final class MeshViewerModel: ObservableObject {
             colorNode?.geometry = g.coloredGeometry()
         }
         if let g, !g.isEmpty { whiteNode?.geometry = g.whiteGeometry() }
+        applyCut()
+    }
+
+    // MARK: Taglio del modello alla quota della sezione
+
+    private static let cutModifier = """
+    #pragma arguments
+    float cutHeight;
+    float cutEnabled;
+    #pragma body
+    if (cutEnabled > 0.5) {
+        float4 worldPos = scn_frame.inverseViewTransform * float4(_surface.position, 1.0);
+        if (worldPos.y > cutHeight) {
+            discard_fragment();
+        }
+    }
+    """
+
+    /// Aggiorna il taglio su tutte le superfici della mesh (veloce: si può chiamare mentre si trascina il cursore).
+    func applyCut() {
+        let enabled = tool == .sezione && cutModel
+        for node in [colorNode, whiteNode].compactMap({ $0 }) {
+            for m in node.geometry?.materials ?? [] {
+                if m.shaderModifiers?[.surface] == nil {
+                    m.shaderModifiers = [.surface: MeshViewerModel.cutModifier]
+                }
+                m.setValue(NSNumber(value: sectionHeight), forKey: "cutHeight")
+                m.setValue(NSNumber(value: enabled ? 1.0 : 0.0), forKey: "cutEnabled")
+            }
+        }
     }
 
     // MARK: Proiezione e viste
@@ -836,7 +870,7 @@ final class MeshViewerModel: ObservableObject {
         }
         let plane = SCNPlane(width: CGFloat(maxP.x - minP.x + 1), height: CGFloat(maxP.z - minP.z + 1))
         let material = SCNMaterial()
-        material.diffuse.contents = UIColor.systemRed.withAlphaComponent(0.12)
+        material.diffuse.contents = UIColor.systemRed.withAlphaComponent(0.07)
         material.lightingModel = .constant
         material.isDoubleSided = true
         material.writesToDepthBuffer = false
@@ -846,10 +880,12 @@ final class MeshViewerModel: ObservableObject {
         planeNode.simdPosition = SIMD3<Float>((minP.x + maxP.x) / 2, sectionHeight, (minP.z + maxP.z) / 2)
         sectionRoot.addChildNode(planeNode)
         sectionRoot.enumerateHierarchy { node, _ in node.categoryBitMask = MeshViewerModel.helperMask }
+        applyCut()
     }
 
     private func clearSection() {
         for child in sectionRoot.childNodes { child.removeFromParentNode() }
+        applyCut()
     }
 
     func exportSectionDXF() {
@@ -1207,7 +1243,7 @@ struct MeshViewerView: View {
         case .righello: return "Tocca i punti sulla mesh: la misura somma tutti i tratti"
         case .area: return "Tocca i vertici dell'area sulla mesh, poi \"Chiudi area\""
         case .nota: return "Tocca la mesh nel punto dove vuoi la nota"
-        case .sezione: return "Sposta il cursore per scegliere la quota del taglio"
+        case .sezione: return "Sposta il cursore: il modello viene tagliato a quella quota"
         case .ritaglia: return "Regola la scatola con i cursori, poi tocca Applica"
         case .tour: return "Percorri la scansione dalle posizioni delle foto"
         }
@@ -1343,11 +1379,16 @@ struct MeshViewerView: View {
                 Text("\(model.sectionCount) segmenti").foregroundStyle(.secondary)
             }
             Slider(value: Binding(get: { Double(model.sectionHeight) },
-                                  set: { model.sectionHeight = Float($0) }),
+                                  set: {
+                                      model.sectionHeight = Float($0)
+                                      model.applyCut()
+                                  }),
                    in: Double(model.minP.y)...Double(model.maxP.y),
                    onEditingChanged: { editing in
                        if !editing { model.updateSection() }
                    })
+            Toggle("Taglia il modello alla quota della sezione", isOn: $model.cutModel)
+                .font(.subheadline)
             HStack {
                 Text("Consiglio: 1,00–1,20 m per una pianta con porte e finestre.")
                     .font(.caption)
